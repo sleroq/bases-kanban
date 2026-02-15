@@ -31,8 +31,8 @@
 
 .bases-kanban-column-header {
 	display: flex;
-	justify-content: space-between;
 	align-items: center;
+	gap: var(--size-2-2);
 	padding: var(--size-4-2) var(--size-4-3);
 	border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -73,6 +73,26 @@
 .bases-kanban-column-count {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);
+	margin-inline-end: auto;
+}
+
+.bases-kanban-add-card-button {
+	width: 1.5rem;
+	height: 1.5rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-primary);
+	color: var(--text-muted);
+	cursor: pointer;
+	padding: 0;
+}
+
+.bases-kanban-add-card-button:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
 }
 
 .bases-kanban-cards {

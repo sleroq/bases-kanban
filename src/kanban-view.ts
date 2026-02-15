@@ -182,6 +182,22 @@ private cardOrder: string[] = [];
 			cls: "bases-kanban-column-count",
 		});
 
+		const addCardButtonEl = headerEl.createEl("button", {
+			text: "+",
+			cls: "bases-kanban-add-card-button",
+		});
+		addCardButtonEl.type = "button";
+		addCardButtonEl.ariaLabel = `Add card to ${columnName}`;
+		addCardButtonEl.draggable = false;
+		addCardButtonEl.addEventListener("mousedown", (evt) => {
+			evt.stopPropagation();
+		});
+		addCardButtonEl.addEventListener("click", (evt) => {
+			evt.preventDefault();
+			evt.stopPropagation();
+			void this.createCardForColumn(groupByProperty, groupKey);
+		});
+
 		const cardsEl = columnEl.createDiv({ cls: "bases-kanban-cards" });
 		cardsEl.addEventListener("dragover", (evt) => {
 			if (groupByProperty === null || this.draggingSourcePath === null) {
@@ -358,6 +374,33 @@ private cardOrder: string[] = [];
 		if (propertiesEl.childElementCount === 0) {
 			propertiesEl.remove();
 		}
+	}
+
+	private async createCardForColumn(
+		groupByProperty: BasesPropertyId | null,
+		groupKey: unknown
+	): Promise<void> {
+		if (groupByProperty === null) {
+			await this.createFileForView();
+			return;
+		}
+
+		const propertyKey = getWritablePropertyKey(groupByProperty);
+		if (propertyKey === null) {
+			await this.createFileForView();
+			return;
+		}
+
+		const targetValue = getTargetGroupValue(groupKey);
+		await this.createFileForView(undefined, (frontmatter) => {
+			const key = resolveFrontmatterKey(frontmatter, groupByProperty, propertyKey);
+			if (targetValue === null) {
+				delete frontmatter[key];
+				return;
+			}
+
+			frontmatter[key] = targetValue;
+		});
 	}
 
 	private refreshEntryIndexes(groups: BasesEntryGroup[]): void {
