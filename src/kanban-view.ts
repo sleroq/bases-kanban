@@ -380,27 +380,77 @@ private cardOrder: string[] = [];
 		groupByProperty: BasesPropertyId | null,
 		groupKey: unknown
 	): Promise<void> {
-		if (groupByProperty === null) {
-			await this.createFileForView();
-			return;
-		}
-
-		const propertyKey = getWritablePropertyKey(groupByProperty);
-		if (propertyKey === null) {
-			await this.createFileForView();
-			return;
-		}
-
+		const groupByPropertyKey =
+			groupByProperty === null ? null : getWritablePropertyKey(groupByProperty);
 		const targetValue = getTargetGroupValue(groupKey);
+		const cardSortConfig = this.getWritableCardSortConfig();
+		const newCardRank =
+			cardSortConfig === null
+				? null
+				: this.getNewCardRankForColumn(
+					groupKey,
+					cardSortConfig.propertyId,
+					cardSortConfig.direction
+				);
+
 		await this.createFileForView(undefined, (frontmatter) => {
-			const key = resolveFrontmatterKey(frontmatter, groupByProperty, propertyKey);
-			if (targetValue === null) {
-				delete frontmatter[key];
-				return;
+			if (groupByProperty !== null && groupByPropertyKey !== null) {
+				const key = resolveFrontmatterKey(
+					frontmatter,
+					groupByProperty,
+					groupByPropertyKey
+				);
+				if (targetValue === null) {
+					delete frontmatter[key];
+				} else {
+					frontmatter[key] = targetValue;
+				}
 			}
 
-			frontmatter[key] = targetValue;
+			if (cardSortConfig !== null && newCardRank !== null) {
+				const rankKey = resolveFrontmatterKey(
+					frontmatter,
+					cardSortConfig.propertyId,
+					cardSortConfig.propertyKey
+				);
+				frontmatter[rankKey] = newCardRank;
+			}
 		});
+	}
+
+	private getNewCardRankForColumn(
+		groupKey: unknown,
+		sortPropertyId: BasesPropertyId,
+		direction: "ASC" | "DESC"
+	): number {
+		const targetValue = getTargetGroupValue(groupKey);
+		const groups = this.data?.groupedData ?? [];
+		const targetGroup = groups.find((group) =>
+			isSameGroupValue(group.key, targetValue)
+		);
+		const entries = targetGroup?.entries ?? [];
+
+		let edgeRank: number | null = null;
+		for (const entry of entries) {
+			const rank = toFiniteNumber(entry.getValue(sortPropertyId));
+			if (rank === null) {
+				continue;
+			}
+
+			if (edgeRank === null) {
+				edgeRank = rank;
+				continue;
+			}
+
+			edgeRank =
+				direction === "ASC" ? Math.min(edgeRank, rank) : Math.max(edgeRank, rank);
+		}
+
+		if (edgeRank === null) {
+			return 1;
+		}
+
+		return direction === "ASC" ? edgeRank - 1 : edgeRank + 1;
 	}
 
 	private refreshEntryIndexes(groups: BasesEntryGroup[]): void {
