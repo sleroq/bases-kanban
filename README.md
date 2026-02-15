@@ -7,7 +7,7 @@
 1. Clone this repository into your Obsidian plugins directory:
    ```bash
    cd /path/to/your/vault/.obsidian/plugins
-   git clone https://github.com/sleroq/obsidian-bases-kanban bases-kanban
+   git clone https://github.com/sleroq/bases-kanban bases-kanban
    ```
 
 2. Navigate to the plugin directory and build:
