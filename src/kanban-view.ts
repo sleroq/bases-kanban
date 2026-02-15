@@ -336,9 +336,9 @@ export class KanbanView extends BasesView {
       this.clearCardDropIndicator();
       void this.handleDrop(groupByProperty, groupKey, filePath, placement);
     });
-    cardEl.addEventListener("contextmenu", (evt) => {
-      this.showCardContextMenu(evt, filePath);
-    });
+		cardEl.addEventListener("contextmenu", (evt) => {
+			this.showCardContextMenu(evt, entry.file);
+		});
 
     const titleEl = cardEl.createDiv({ cls: "bases-kanban-card-title" });
     const linkEl = titleEl.createEl("a", {
@@ -355,9 +355,9 @@ export class KanbanView extends BasesView {
         evt.ctrlKey || evt.metaKey,
       );
     });
-    linkEl.addEventListener("contextmenu", (evt) => {
-      this.showCardContextMenu(evt, filePath);
-    });
+		linkEl.addEventListener("contextmenu", (evt) => {
+			this.showCardContextMenu(evt, entry.file);
+		});
 
     const propertiesToDisplay = selectedProperties.filter(
       (propertyId) =>
@@ -429,23 +429,14 @@ export class KanbanView extends BasesView {
     });
   }
 
-  private showCardContextMenu(evt: MouseEvent, filePath: string): void {
-    const abstractFile = this.app.vault.getAbstractFileByPath(filePath);
-    if (!(abstractFile instanceof TFile)) {
-      return;
-    }
-
-    evt.preventDefault();
-    evt.stopPropagation();
-    const menu = new Menu();
-    this.app.workspace.trigger(
-      "file-menu",
-      menu,
-      abstractFile,
-      "link-context-menu",
-    );
-    menu.showAtMouseEvent(evt);
-  }
+	private showCardContextMenu(evt: MouseEvent, file: TFile): void {
+		evt.preventDefault();
+		evt.stopPropagation();
+		evt.stopImmediatePropagation();
+		const menu = new Menu();
+		this.app.workspace.trigger("file-menu", menu, file, "kanban-view");
+		menu.showAtPosition({ x: evt.pageX, y: evt.pageY });
+	}
 
   private async createCardForColumn(
     groupByProperty: BasesPropertyId | null,
