@@ -1,5 +1,4 @@
 import {
-  BasesEntry,
   BasesEntryGroup,
   BasesPropertyId,
   NullValue,
@@ -127,9 +126,66 @@ export function parseSingleWikiLink(
   return { target, display };
 }
 
-export function getColumnName(groupKey: unknown): string {
+export interface ParsedWikiLink {
+  target: string;
+  display: string;
+}
+
+export function parseWikiLinks(value: string): ParsedWikiLink[] {
+  const regex = /\[\[([^\]|]+(?:#[^\]|]+)?)(?:\|([^\]]+))?\]\]/g;
+  const links: ParsedWikiLink[] = [];
+  let match;
+
+  while ((match = regex.exec(value)) !== null) {
+    const target = match[1].trim();
+    if (target.length === 0) continue;
+
+    const alias = match[2]?.trim();
+    const display = alias && alias.length > 0 ? alias : target;
+    links.push({ target, display });
+  }
+
+  return links;
+}
+
+export function getPropertyValues(value: unknown): string[] | null {
+  if (value === null || value === undefined || value instanceof NullValue) {
+    return null;
+  }
+
+  // Handle arrays - each element is a separate value
+  if (Array.isArray(value)) {
+    const values = value
+      .map((v) => {
+        const str = String(v).trim();
+        return str.length > 0 ? str : null;
+      })
+      .filter((v): v is string => v !== null);
+    return values.length > 0 ? values : null;
+  }
+
+  const stringValue = String(value).trim();
+  if (stringValue.length === 0) {
+    return null;
+  }
+
+  // Handle comma-separated tags
+  if (stringValue.includes(",")) {
+    return stringValue
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+  }
+
+  return [stringValue];
+}
+
+export function getColumnName(
+  groupKey: unknown,
+  emptyColumnLabel?: string,
+): string {
   if (normalizeGroupKey(groupKey) === null) {
-    return NO_VALUE_COLUMN;
+    return emptyColumnLabel ?? NO_VALUE_COLUMN;
   }
 
   return String(groupKey);
@@ -236,44 +292,6 @@ export function getCardDropTargetFromColumn(
   return { path: bestPath, placement: bestPlacement };
 }
 
-export function sortEntriesByRank(
-  entries: BasesEntry[],
-  sortConfig: { propertyId: BasesPropertyId; direction: "ASC" | "DESC" },
-): BasesEntry[] {
-  const rankedEntries = entries.map((entry, index) => {
-    const rank = toFiniteNumber(entry.getValue(sortConfig.propertyId));
-    return {
-      entry,
-      rank,
-      index,
-    };
-  });
-
-  rankedEntries.sort((a, b) => {
-    if (a.rank === null && b.rank === null) {
-      return a.index - b.index;
-    }
-
-    if (a.rank === null) {
-      return 1;
-    }
-
-    if (b.rank === null) {
-      return -1;
-    }
-
-    const difference =
-      sortConfig.direction === "ASC" ? a.rank - b.rank : b.rank - a.rank;
-    if (difference !== 0) {
-      return difference;
-    }
-
-    return a.index - b.index;
-  });
-
-  return rankedEntries.map((entry) => entry.entry);
-}
-
 export function getTargetGroupValue(groupKey: unknown): string | null {
   return normalizeGroupKey(groupKey);
 }
@@ -299,4 +317,18 @@ export function resolveFrontmatterKey(
   }
 
   return propertyKey;
+}
+
+export function getHashColor(
+  value: string,
+  saturation = 80,
+  lightness = 60,
+  alpha = 0.5,
+): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = value.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const h = Math.abs(hash) % 360;
+  return `hsla(${h}, ${saturation}%, ${lightness}%, ${alpha})`;
 }

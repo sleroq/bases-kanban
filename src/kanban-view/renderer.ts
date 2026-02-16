@@ -1,10 +1,12 @@
 import { App, BasesEntry, BasesPropertyId, TFile } from "obsidian";
 
 import {
-  formatPropertyValue,
   getCardDropTargetFromColumn,
   getColumnName,
-  parseSingleWikiLink,
+  getHashColor,
+  getPropertyValues,
+  parseWikiLinks,
+  type ParsedWikiLink,
 } from "./utils";
 
 type Placement = "before" | "after";
@@ -18,6 +20,14 @@ export type RenderContext = {
   getColumnDropPlacement: () => Placement | null;
   getCardDropPlacement: () => Placement | null;
   getCardDropTargetPath: () => string | null;
+  emptyColumnLabel: string;
+  addCardButtonText: string;
+  cardTitleSource: "basename" | "filename" | "path";
+  propertyValueSeparator: string;
+  tagPropertySuffix: string;
+  tagSaturation: number;
+  tagLightness: number;
+  tagAlpha: number;
 };
 
 export type KanbanRendererHandlers = {
@@ -52,6 +62,8 @@ export type KanbanRendererHandlers = {
     placement: Placement,
   ) => Promise<void>;
   onShowCardContextMenu: (evt: MouseEvent, file: TFile) => void;
+  onKeyDown: (evt: KeyboardEvent) => void;
+  onColumnScroll: (columnKey: string, scrollTop: number) => void;
 };
 
 export class KanbanRenderer {
@@ -68,8 +80,12 @@ export class KanbanRenderer {
     startCardIndex: number,
     context: RenderContext,
   ): number {
-    if (!boardEl.hasAttribute("data-selection-clear-bound")) {
-      boardEl.setAttribute("data-selection-clear-bound", "true");
+    if (!boardEl.hasAttribute("data-keyboard-bound")) {
+      boardEl.setAttribute("data-keyboard-bound", "true");
+      boardEl.setAttribute("tabindex", "0");
+      boardEl.addEventListener("keydown", (evt) => {
+        this.handlers.onKeyDown(evt);
+      });
       boardEl.addEventListener("click", (evt) => {
         if ((evt.target as HTMLElement).closest(".bases-kanban-card") !== null) {
           return;
@@ -79,7 +95,7 @@ export class KanbanRenderer {
       });
     }
 
-    const columnName = getColumnName(groupKey);
+    const columnName = getColumnName(groupKey, context.emptyColumnLabel);
     const columnEl = boardEl.createDiv({ cls: "bases-kanban-column" });
     columnEl.dataset.columnKey = columnKey;
     const headerEl = columnEl.createDiv({ cls: "bases-kanban-column-header" });
@@ -138,7 +154,7 @@ export class KanbanRenderer {
     });
 
     const addCardButtonEl = headerEl.createEl("button", {
-      text: "+",
+      text: context.addCardButtonText,
       cls: "bases-kanban-add-card-button",
     });
     addCardButtonEl.type = "button";
@@ -213,6 +229,56 @@ export class KanbanRenderer {
     return cardIndex;
   }
 
+  private renderWikiLinks(
+    containerEl: HTMLElement,
+    links: ParsedWikiLink[],
+    isTagProperty: boolean = false,
+    propertyValueSeparator: string = ", ",
+    tagSaturation = 80,
+    tagLightness = 60,
+    tagAlpha = 0.5,
+  ): void {
+    for (let i = 0; i < links.length; i++) {
+      const link = links[i];
+      const cls = isTagProperty
+        ? "bases-kanban-property-value internal-link bases-kanban-property-link bases-kanban-property-tag"
+        : "bases-kanban-property-value internal-link bases-kanban-property-link";
+      const linkEl = containerEl.createEl("a", {
+        cls,
+        text: link.display,
+      });
+      if (isTagProperty) {
+        linkEl.style.backgroundColor = getHashColor(
+          link.display,
+          tagSaturation,
+          tagLightness,
+          tagAlpha,
+        );
+      }
+
+      linkEl.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        // Check for Cmd+Option+Click (Mac) or Ctrl+Alt+Click (Windows/Linux) to open to the right
+        const isNewTab = evt.ctrlKey || evt.metaKey;
+        const isOpenToRight = isNewTab && evt.altKey;
+        void this.app.workspace.openLinkText(
+          link.target,
+          "",
+          isOpenToRight ? "split" : isNewTab,
+        );
+      });
+
+      // Add separator between links (not after last) - skip for tag properties
+      if (!isTagProperty && i < links.length - 1) {
+        containerEl.createSpan({
+          cls: "bases-kanban-property-separator",
+          text: propertyValueSeparator,
+        });
+      }
+    }
+  }
+
   private renderCard(
     cardsEl: HTMLElement,
     entry: BasesEntry,
@@ -220,7 +286,7 @@ export class KanbanRenderer {
     cardIndex: number,
     context: RenderContext,
   ): void {
-    const title = entry.file.basename;
+    const title = this.getCardTitle(entry, context.cardTitleSource);
     const filePath = entry.file.path;
     const cardEl = cardsEl.createDiv({ cls: "bases-kanban-card" });
     cardEl.draggable = false;
@@ -314,10 +380,13 @@ export class KanbanRenderer {
     linkEl.addEventListener("click", (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
+      // Check for Cmd+Option+Click (Mac) or Ctrl+Alt+Click (Windows/Linux) to open to the right
+      const isNewTab = evt.ctrlKey || evt.metaKey;
+      const isOpenToRight = isNewTab && evt.altKey;
       void this.app.workspace.openLinkText(
         filePath,
         "",
-        evt.ctrlKey || evt.metaKey,
+        isOpenToRight ? "split" : isNewTab,
       );
     });
     linkEl.addEventListener("contextmenu", (evt) => {
@@ -337,41 +406,78 @@ export class KanbanRenderer {
       cls: "bases-kanban-card-properties",
     });
     for (const propertyId of propertiesToDisplay) {
-      const value = formatPropertyValue(entry.getValue(propertyId));
-      if (value === null) {
+      const values = getPropertyValues(entry.getValue(propertyId));
+      if (values === null) {
         continue;
       }
 
       const rowEl = propertiesEl.createDiv({
         cls: "bases-kanban-property-row",
       });
-      const wikiLink = parseSingleWikiLink(value);
-      if (wikiLink === null) {
-        rowEl.createSpan({
-          cls: "bases-kanban-property-value",
-          text: value,
-        });
-        continue;
+
+      for (let i = 0; i < values.length; i++) {
+        const value = values[i];
+        const links = parseWikiLinks(value);
+
+        const isTagProperty = propertyId.endsWith(context.tagPropertySuffix);
+
+        if (links.length === 0) {
+          // Plain text value
+          const cls = isTagProperty
+            ? "bases-kanban-property-value bases-kanban-property-tag"
+            : "bases-kanban-property-value";
+          const valueEl = rowEl.createSpan({
+            cls,
+            text: value,
+          });
+          if (isTagProperty) {
+            valueEl.style.backgroundColor = getHashColor(
+              value,
+              context.tagSaturation,
+              context.tagLightness,
+              context.tagAlpha,
+            );
+          }
+        } else {
+          // Has wiki links - render as clickable links
+          this.renderWikiLinks(
+            rowEl,
+            links,
+            isTagProperty,
+            context.propertyValueSeparator,
+            context.tagSaturation,
+            context.tagLightness,
+            context.tagAlpha,
+          );
+        }
+
+        // Add separator between values (not after last) - skip for tag properties
+        if (!isTagProperty && i < values.length - 1) {
+          rowEl.createSpan({
+            cls: "bases-kanban-property-separator",
+            text: context.propertyValueSeparator,
+          });
+        }
       }
-
-      const valueLinkEl = rowEl.createEl("a", {
-        cls: "bases-kanban-property-value internal-link",
-        text: wikiLink.display,
-      });
-
-      valueLinkEl.addEventListener("click", (evt) => {
-        evt.preventDefault();
-        evt.stopPropagation();
-        void this.app.workspace.openLinkText(
-          wikiLink.target,
-          "",
-          evt.ctrlKey || evt.metaKey,
-        );
-      });
     }
 
     if (propertiesEl.childElementCount === 0) {
       propertiesEl.remove();
+    }
+  }
+
+  private getCardTitle(
+    entry: BasesEntry,
+    cardTitleSource: "basename" | "filename" | "path",
+  ): string {
+    switch (cardTitleSource) {
+      case "filename":
+        return entry.file.name;
+      case "path":
+        return entry.file.path;
+      case "basename":
+      default:
+        return entry.file.basename;
     }
   }
 }

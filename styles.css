@@ -17,10 +17,11 @@
     height: 100%;
     overflow-x: auto;
     overflow-y: hidden;
+    outline: none;
 }
 
 .bases-kanban-column {
-    flex: 0 0 280px;
+    flex: 0 0 var(--bases-kanban-column-width, 280px);
     background: var(--background-secondary);
     border-radius: var(--radius-m);
     display: flex;
@@ -51,7 +52,7 @@
     position: absolute;
     top: 0;
     height: 100%;
-    width: 3px;
+    width: var(--bases-kanban-drop-indicator-width, 3px);
     background: var(--interactive-accent);
     pointer-events: none;
     z-index: 1;
@@ -142,4 +143,15 @@
 .bases-kanban-property-value {
     text-align: left;
     word-break: break-word;
+}
+
+.bases-kanban-property-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 100px;
+    font-size: 0.75em;
+    color: var(--bases-kanban-tag-text-color, rgba(0, 0, 0, 0.6));
+    font-weight: 500;
+    margin-right: 3px;
+    margin-bottom: 2px;
 }

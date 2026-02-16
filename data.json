@@ -1,0 +1,20 @@
+{
+  "emptyColumnLabel": "(No value)",
+  "placeholderText": "Set \"Group by\" in the sort menu to organize cards into columns.",
+  "scrollDebounceMs": 450,
+  "trashShortcutKey": "Backspace",
+  "addCardButtonText": "+",
+  "trashMenuText": "Move to trash",
+  "trashConfirmButtonText": "Move to trash",
+  "cancelButtonText": "Cancel",
+  "failedTrashNoticeText": "Failed to move {count} file(s) to trash",
+  "cardTitleSource": "basename",
+  "propertyValueSeparator": ", ",
+  "tagPropertySuffix": ".tags",
+  "tagSaturation": 80,
+  "tagLightness": 60,
+  "tagAlpha": 0.5,
+  "columnWidth": 280,
+  "dropIndicatorWidth": 3,
+  "tagTextColor": "rgba(0, 0, 0, 0.6)"
+}

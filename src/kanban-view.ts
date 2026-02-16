@@ -5,15 +5,17 @@ import {
   BasesPropertyId,
   BasesView,
   Menu,
+  Modal,
+  Notice,
   QueryController,
   TFile,
 } from "obsidian";
 
+import type BasesKanbanPlugin from "./main";
 import {
-  CARD_SORT_PROPERTY_OPTION_KEY,
+  BOARD_SCROLL_POSITION_KEY,
   COLUMN_ORDER_OPTION_KEY,
-  DEFAULT_CARD_SORT_PROPERTY_ID,
-  GROUP_BY_PLACEHOLDER,
+  LOCAL_CARD_ORDER_OPTION_KEY,
 } from "./kanban-view/constants";
 import { getKanbanViewOptions } from "./kanban-view/options";
 import {
@@ -23,7 +25,6 @@ import {
   getSelectedProperties,
   getWritablePropertyKey,
   hasConfiguredGroupBy,
-  sortEntriesByRank,
   sortRange,
 } from "./kanban-view/utils";
 import { buildEntryIndexes, getElementByDataset } from "./kanban-view/indexing";
@@ -41,13 +42,20 @@ export class KanbanView extends BasesView {
   private readonly dragController: KanbanDragController;
   private readonly mutationService: KanbanMutationService;
   private readonly renderer: KanbanRenderer;
+  private readonly plugin: BasesKanbanPlugin;
   private selectedPaths = new Set<string>();
   private cardOrder: string[] = [];
   private entryByPath = new Map<string, BasesEntry>();
   private lastSelectedIndex: number | null = null;
+  private scrollSaveTimeout: number | null = null;
 
-  constructor(controller: QueryController, containerEl: HTMLElement) {
+  constructor(
+    controller: QueryController,
+    containerEl: HTMLElement,
+    plugin: BasesKanbanPlugin,
+  ) {
     super(controller);
+    this.plugin = plugin;
     this.rootEl = containerEl.createDiv({ cls: "bases-kanban-container" });
     this.dragController = new KanbanDragController(this.rootEl);
     this.mutationService = new KanbanMutationService(this.app as App);
@@ -102,6 +110,12 @@ export class KanbanView extends BasesView {
       onShowCardContextMenu: (evt, file) => {
         this.showCardContextMenu(evt, file);
       },
+      onKeyDown: (evt) => {
+        this.handleKeyDown(evt);
+      },
+      onColumnScroll: (columnKey, scrollTop) => {
+        this.handleColumnScroll(columnKey, scrollTop);
+      },
     };
     this.renderer = new KanbanRenderer(this.app as App, handlers);
   }
@@ -123,13 +137,9 @@ export class KanbanView extends BasesView {
     }
 
     const orderedGroups = this.sortGroupsByColumnOrder(groups);
-    const cardSortConfig = this.getWritableCardSortConfig();
     const renderedGroups = orderedGroups.map((group) => ({
       group,
-      entries:
-        cardSortConfig === null
-          ? group.entries
-          : sortEntriesByRank(group.entries, cardSortConfig),
+      entries: this.applyLocalCardOrder(getColumnKey(group.key), group.entries),
     }));
     this.refreshEntryIndexesFromRendered(renderedGroups);
 
@@ -140,6 +150,7 @@ export class KanbanView extends BasesView {
     );
 
     const boardEl = this.rootEl.createDiv({ cls: "bases-kanban-board" });
+    this.setupBoardScrollListener(boardEl);
     const context: RenderContext = {
       selectedProperties,
       groupByProperty,
@@ -150,6 +161,14 @@ export class KanbanView extends BasesView {
         this.dragController.getColumnDropPlacement(),
       getCardDropPlacement: () => this.dragController.getCardDropPlacement(),
       getCardDropTargetPath: () => this.dragController.getCardDropTargetPath(),
+      emptyColumnLabel: this.plugin.settings.emptyColumnLabel,
+      addCardButtonText: this.plugin.settings.addCardButtonText,
+      cardTitleSource: this.plugin.settings.cardTitleSource,
+      propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
+      tagPropertySuffix: this.plugin.settings.tagPropertySuffix,
+      tagSaturation: this.plugin.settings.tagSaturation,
+      tagLightness: this.plugin.settings.tagLightness,
+      tagAlpha: this.plugin.settings.tagAlpha,
     };
 
     let cardIndex = 0;
@@ -164,7 +183,11 @@ export class KanbanView extends BasesView {
       );
     }
 
-    this.restoreBoardScrollLeft(previousBoardScrollLeft);
+    const scrollLeftToRestore =
+      previousBoardScrollLeft > 0
+        ? previousBoardScrollLeft
+        : this.loadBoardScrollPosition();
+    this.restoreBoardScrollLeft(scrollLeftToRestore);
   }
 
   private getBoardScrollLeft(): number {
@@ -198,9 +221,38 @@ export class KanbanView extends BasesView {
     });
   }
 
+  private setupBoardScrollListener(boardEl: HTMLElement): void {
+    boardEl.addEventListener("scroll", () => {
+      this.debouncedSaveBoardScrollPosition(boardEl.scrollLeft);
+    });
+  }
+
+  private debouncedSaveBoardScrollPosition(scrollLeft: number): void {
+    if (this.scrollSaveTimeout !== null) {
+      window.clearTimeout(this.scrollSaveTimeout);
+    }
+    this.scrollSaveTimeout = window.setTimeout(() => {
+      this.saveBoardScrollPosition(scrollLeft);
+      this.scrollSaveTimeout = null;
+    }, this.plugin.settings.scrollDebounceMs);
+  }
+
+  private saveBoardScrollPosition(scrollLeft: number): void {
+    this.config?.set(BOARD_SCROLL_POSITION_KEY, String(scrollLeft));
+  }
+
+  private loadBoardScrollPosition(): number {
+    const configValue = this.config?.get(BOARD_SCROLL_POSITION_KEY);
+    if (typeof configValue !== "string" || configValue.length === 0) {
+      return 0;
+    }
+    const parsed = Number.parseInt(configValue, 10);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
   private renderPlaceholder(): void {
     this.rootEl.createEl("p", {
-      text: GROUP_BY_PLACEHOLDER,
+      text: this.plugin.settings.placeholderText,
       cls: "bases-kanban-placeholder",
     });
   }
@@ -229,8 +281,121 @@ export class KanbanView extends BasesView {
     evt.stopPropagation();
     evt.stopImmediatePropagation();
     const menu = new Menu();
+
+    // Add custom trash option at the top
+    menu.addItem((item) => {
+      item
+        .setTitle(this.plugin.settings.trashMenuText)
+        .setIcon("trash")
+        .onClick(() => void this.trashFiles([file]));
+    });
+
+    menu.addSeparator();
+
     this.app.workspace.trigger("file-menu", menu, file, "kanban-view");
-    menu.showAtPosition({ x: evt.pageX, y: evt.pageY });
+    menu.showAtMouseEvent(evt);
+  }
+
+  private async trashFiles(files: TFile[]): Promise<void> {
+    if (files.length === 0) {
+      return;
+    }
+
+    // Show confirmation for multiple files
+    if (files.length > 1) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        const modal = new Modal(this.app as App);
+        modal.titleEl.setText(
+          `Move ${files.length} files to trash?`,
+        );
+        modal.contentEl.createEl("p", {
+          text: `This will move ${files.length} files to the trash. This action can be undone from the system trash.`,
+        });
+
+        const buttonContainer = modal.contentEl.createDiv({
+          cls: "modal-button-container",
+        });
+
+        const cancelButton = buttonContainer.createEl("button", {
+          text: this.plugin.settings.cancelButtonText,
+          cls: "mod-secondary",
+        });
+        cancelButton.addEventListener("click", () => {
+          resolve(false);
+          modal.close();
+        });
+
+        const confirmButton = buttonContainer.createEl("button", {
+          text: this.plugin.settings.trashConfirmButtonText,
+          cls: "mod-cta",
+        });
+        confirmButton.style.backgroundColor = "var(--background-modifier-error)";
+        confirmButton.style.color = "var(--text-on-accent)";
+        confirmButton.addEventListener("click", () => {
+          resolve(true);
+          modal.close();
+        });
+
+        modal.open();
+      });
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    // Trash files - try system trash first, fall back to local trash
+    const trashedFiles: string[] = [];
+    const failedFiles: string[] = [];
+
+    const promises = files.map(async (file) => {
+      try {
+        await this.app.vault.trash(file, true);
+        trashedFiles.push(file.path);
+      } catch (error) {
+        console.error(`Failed to trash ${file.path}:`, error);
+        failedFiles.push(file.path);
+      }
+    });
+
+    await Promise.all(promises);
+
+    // Show notice if some files failed
+    if (failedFiles.length > 0) {
+      const noticeText = this.plugin.settings.failedTrashNoticeText.replace(
+        "{count}",
+        String(failedFiles.length),
+      );
+      new Notice(noticeText);
+    }
+
+    this.clearSelection();
+  }
+
+  private handleKeyDown(evt: KeyboardEvent): void {
+    // Cmd/Ctrl + configured shortcut key to trash selected files
+    const shortcutKey = this.plugin.settings.trashShortcutKey;
+    if ((evt.metaKey || evt.ctrlKey) && evt.key === shortcutKey) {
+      if (this.selectedPaths.size === 0) {
+        return;
+      }
+
+      evt.preventDefault();
+      evt.stopPropagation();
+
+      // Get TFile objects from selected paths
+      const filesToTrash: TFile[] = [];
+      for (const path of this.selectedPaths) {
+        const entry = this.entryByPath.get(path);
+        if (entry?.file) {
+          filesToTrash.push(entry.file);
+        }
+      }
+
+      if (filesToTrash.length > 0) {
+        void this.trashFiles(filesToTrash);
+      }
+    }
   }
 
   private async createCardForColumn(
@@ -239,27 +404,199 @@ export class KanbanView extends BasesView {
   ): Promise<void> {
     const groupByPropertyKey =
       groupByProperty === null ? null : getWritablePropertyKey(groupByProperty);
-    const cardSortConfig = this.getWritableCardSortConfig();
-    const newCardRank =
-      cardSortConfig === null
-        ? null
-        : this.mutationService.getNewCardRankForColumn(
-            this.data?.groupedData ?? [],
-            groupKey,
-            cardSortConfig.propertyId,
-            cardSortConfig.direction,
-          );
 
     await this.mutationService.createCardForColumn({
       groupByProperty,
       groupByPropertyKey,
       groupKey,
-      cardSortConfig,
-      newCardRank,
       createFileForView: async (filePath, updateFrontmatter) => {
         await this.createFileForView(filePath, updateFrontmatter);
       },
     });
+  }
+
+  private applyLocalCardOrder(
+    columnKey: string,
+    entries: BasesEntry[],
+  ): BasesEntry[] {
+    const orderedPaths = this.getLocalCardOrderByColumn().get(columnKey);
+    if (orderedPaths === undefined || orderedPaths.length === 0) {
+      return entries;
+    }
+
+    const entryByPath = new Map(
+      entries.map((entry) => [entry.file.path, entry]),
+    );
+    const nextEntries: BasesEntry[] = [];
+    const usedPaths = new Set<string>();
+
+    for (const path of orderedPaths) {
+      const entry = entryByPath.get(path);
+      if (entry === undefined) {
+        continue;
+      }
+
+      nextEntries.push(entry);
+      usedPaths.add(path);
+    }
+
+    const newEntries: BasesEntry[] = [];
+    for (const entry of entries) {
+      if (usedPaths.has(entry.file.path)) {
+        continue;
+      }
+
+      newEntries.push(entry);
+    }
+
+    nextEntries.unshift(...newEntries);
+
+    return nextEntries;
+  }
+
+  private getLocalCardOrderByColumn(): Map<string, string[]> {
+    const configValue = this.config?.get(LOCAL_CARD_ORDER_OPTION_KEY);
+    if (typeof configValue !== "string" || configValue.trim().length === 0) {
+      return new Map();
+    }
+
+    try {
+      const parsedValue = JSON.parse(configValue) as unknown;
+      if (parsedValue === null || typeof parsedValue !== "object") {
+        return new Map();
+      }
+
+      const orderByColumn = new Map<string, string[]>();
+      for (const [columnKey, pathsValue] of Object.entries(parsedValue)) {
+        if (!Array.isArray(pathsValue) || columnKey.trim().length === 0) {
+          continue;
+        }
+
+        const paths: string[] = [];
+        const seenPaths = new Set<string>();
+        for (const pathValue of pathsValue) {
+          if (typeof pathValue !== "string" || pathValue.length === 0) {
+            continue;
+          }
+
+          if (seenPaths.has(pathValue)) {
+            continue;
+          }
+
+          seenPaths.add(pathValue);
+          paths.push(pathValue);
+        }
+
+        if (paths.length > 0) {
+          orderByColumn.set(columnKey, paths);
+        }
+      }
+
+      return orderByColumn;
+    } catch {
+      return new Map();
+    }
+  }
+
+  private setLocalCardOrderByColumn(
+    orderByColumn: Map<string, string[]>,
+  ): void {
+    if (orderByColumn.size === 0) {
+      this.config?.set(LOCAL_CARD_ORDER_OPTION_KEY, "");
+      return;
+    }
+
+    const serialized: Record<string, string[]> = {};
+    for (const [columnKey, paths] of orderByColumn.entries()) {
+      if (paths.length === 0) {
+        continue;
+      }
+
+      serialized[columnKey] = paths;
+    }
+
+    const nextConfigValue =
+      Object.keys(serialized).length === 0 ? "" : JSON.stringify(serialized);
+    this.config?.set(LOCAL_CARD_ORDER_OPTION_KEY, nextConfigValue);
+  }
+
+  private updateLocalCardOrderForDrop(
+    sourceColumnKey: string | null,
+    targetColumnKey: string,
+    draggedPaths: string[],
+    targetPath: string | null,
+    placement: "before" | "after",
+  ): void {
+    if (draggedPaths.length === 0) {
+      return;
+    }
+
+    const uniqueDraggedPaths: string[] = [];
+    const movedSet = new Set<string>();
+    for (const path of draggedPaths) {
+      if (movedSet.has(path)) {
+        continue;
+      }
+
+      movedSet.add(path);
+      uniqueDraggedPaths.push(path);
+    }
+
+    const localOrderByColumn = this.getLocalCardOrderByColumn();
+    if (sourceColumnKey === null || sourceColumnKey === targetColumnKey) {
+      const currentPaths = this.getColumnCardPaths(targetColumnKey);
+      const reorderedPaths = this.reorderPathsForDrop(
+        currentPaths,
+        uniqueDraggedPaths,
+        targetPath,
+        placement,
+      );
+      localOrderByColumn.set(targetColumnKey, reorderedPaths);
+      this.setLocalCardOrderByColumn(localOrderByColumn);
+      return;
+    }
+
+    const sourcePaths = this.getColumnCardPaths(sourceColumnKey).filter(
+      (path) => !movedSet.has(path),
+    );
+    const targetPaths = this.getColumnCardPaths(targetColumnKey).filter(
+      (path) => !movedSet.has(path),
+    );
+    const reorderedTargetPaths = this.reorderPathsForDrop(
+      targetPaths,
+      uniqueDraggedPaths,
+      targetPath,
+      placement,
+    );
+
+    localOrderByColumn.set(sourceColumnKey, sourcePaths);
+    localOrderByColumn.set(targetColumnKey, reorderedTargetPaths);
+    this.setLocalCardOrderByColumn(localOrderByColumn);
+  }
+
+  private reorderPathsForDrop(
+    existingPaths: string[],
+    movedPaths: string[],
+    targetPath: string | null,
+    placement: "before" | "after",
+  ): string[] {
+    const movedSet = new Set(movedPaths);
+    if (targetPath !== null && movedSet.has(targetPath)) {
+      return existingPaths;
+    }
+
+    const nextPaths = existingPaths.filter((path) => !movedSet.has(path));
+    let insertionIndex = nextPaths.length;
+
+    if (targetPath !== null) {
+      const targetIndex = nextPaths.indexOf(targetPath);
+      if (targetIndex !== -1) {
+        insertionIndex = placement === "before" ? targetIndex : targetIndex + 1;
+      }
+    }
+
+    nextPaths.splice(insertionIndex, 0, ...movedPaths);
+    return nextPaths;
   }
 
   private refreshEntryIndexes(groups: BasesEntryGroup[]): void {
@@ -440,6 +777,13 @@ export class KanbanView extends BasesView {
     this.render();
   }
 
+  private handleColumnScroll(columnKey: string, scrollTop: number): void {
+    // Stub for vertical column scroll - not currently implemented
+    // This satisfies the KanbanRendererHandlers interface
+    void columnKey;
+    void scrollTop;
+  }
+
   private sortGroupsByColumnOrder(
     groups: BasesEntryGroup[],
   ): BasesEntryGroup[] {
@@ -467,9 +811,7 @@ export class KanbanView extends BasesView {
     });
   }
 
-  private mergeGroupsByColumnKey(
-    groups: BasesEntryGroup[],
-  ): BasesEntryGroup[] {
+  private mergeGroupsByColumnKey(groups: BasesEntryGroup[]): BasesEntryGroup[] {
     const mergedByColumnKey = new Map<string, BasesEntryGroup>();
 
     for (const group of groups) {
@@ -535,6 +877,22 @@ export class KanbanView extends BasesView {
       return;
     }
 
+    const draggedPaths = this.getDraggedPaths(draggingSourcePath);
+    const sourceEntry = this.entryByPath.get(draggingSourcePath);
+    const sourceColumnKey =
+      sourceEntry === undefined
+        ? null
+        : getColumnKey(sourceEntry.getValue(groupByProperty));
+    const targetColumnKey = getColumnKey(groupKey);
+
+    this.updateLocalCardOrderForDrop(
+      sourceColumnKey,
+      targetColumnKey,
+      draggedPaths,
+      targetPath,
+      placement,
+    );
+
     await this.mutationService.handleDrop({
       groupByProperty,
       groupByPropertyKey: getWritablePropertyKey(groupByProperty),
@@ -542,50 +900,14 @@ export class KanbanView extends BasesView {
       targetPath,
       placement,
       draggingSourcePath,
-      draggedPaths: this.getDraggedPaths(draggingSourcePath),
+      draggedPaths,
       entryByPath: this.entryByPath,
-      getColumnCardPaths: (columnKey) => this.getColumnCardPaths(columnKey),
       getColumnKey,
-      sortConfig: this.getWritableCardSortConfig(),
     });
-  }
 
-  private getWritableCardSortConfig(): {
-    propertyId: BasesPropertyId;
-    propertyKey: string;
-    direction: "ASC" | "DESC";
-  } | null {
-    const sortConfigs = this.config?.getSort() ?? [];
-    for (const sortConfig of sortConfigs) {
-      const propertyKey = getWritablePropertyKey(sortConfig.property);
-      if (propertyKey === null) {
-        continue;
-      }
-
-      return {
-        propertyId: sortConfig.property,
-        propertyKey,
-        direction: sortConfig.direction,
-      };
+    if (sourceColumnKey === targetColumnKey) {
+      this.render();
     }
-
-    const fallbackPropertyId = this.config?.getAsPropertyId(
-      CARD_SORT_PROPERTY_OPTION_KEY,
-    );
-    const resolvedFallbackPropertyId =
-      fallbackPropertyId ?? DEFAULT_CARD_SORT_PROPERTY_ID;
-    const fallbackPropertyKey = getWritablePropertyKey(
-      resolvedFallbackPropertyId,
-    );
-    if (fallbackPropertyKey === null) {
-      return null;
-    }
-
-    return {
-      propertyId: resolvedFallbackPropertyId,
-      propertyKey: fallbackPropertyKey,
-      direction: "ASC",
-    };
   }
 
   private getColumnCardPaths(columnKey: string): string[] {
