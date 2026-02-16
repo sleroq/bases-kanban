@@ -23,13 +23,12 @@
 /* Column with transparency support */
 .bases-kanban-column {
 	flex: 0 0 var(--bases-kanban-column-width, 280px);
-	background: var(--background-secondary);
+	background: color-mix(in srgb, var(--background-secondary), transparent calc(100% - var(--bases-kanban-column-transparency, 1) * 100%));
 	border-radius: var(--radius-m);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 	position: relative;
-	opacity: var(--bases-kanban-column-transparency, 1);
 }
 
 .bases-kanban-placeholder {
