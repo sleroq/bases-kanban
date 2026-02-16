@@ -18,6 +18,7 @@ import {
   BACKGROUND_BRIGHTNESS_OPTION_KEY,
   BACKGROUND_IMAGE_OPTION_KEY,
   BOARD_SCROLL_POSITION_KEY,
+  BOARD_SCROLL_TOP_POSITION_KEY,
   COLUMN_ORDER_OPTION_KEY,
   COLUMN_TRANSPARENCY_OPTION_KEY,
   LOCAL_CARD_ORDER_OPTION_KEY,
@@ -207,11 +208,11 @@ export class KanbanView extends BasesView {
 
     this.refreshElementIndexes();
 
-    const scrollLeftToRestore =
-      previousBoardScrollLeft > 0
-        ? previousBoardScrollLeft
-        : this.loadBoardScrollPosition();
-    this.restoreBoardScrollLeft(scrollLeftToRestore);
+    const { scrollLeft: scrollLeftToRestore, scrollTop: scrollTopToRestore } =
+      this.loadBoardScrollPosition();
+    const finalScrollLeft =
+      previousBoardScrollLeft > 0 ? previousBoardScrollLeft : scrollLeftToRestore;
+    this.restoreBoardScrollPosition(finalScrollLeft, scrollTopToRestore);
   }
 
   private getBoardScrollLeft(): number {
@@ -225,11 +226,7 @@ export class KanbanView extends BasesView {
     return boardEl.scrollLeft;
   }
 
-  private restoreBoardScrollLeft(scrollLeft: number): void {
-    if (scrollLeft <= 0) {
-      return;
-    }
-
+  private restoreBoardScrollPosition(scrollLeft: number, scrollTop: number): void {
     const boardEl = this.rootEl.querySelector<HTMLElement>(
       ".bases-kanban-board",
     );
@@ -237,41 +234,74 @@ export class KanbanView extends BasesView {
       return;
     }
 
-    boardEl.scrollLeft = scrollLeft;
+    if (scrollLeft > 0) {
+      boardEl.scrollLeft = scrollLeft;
+    }
+    if (scrollTop > 0) {
+      boardEl.scrollTop = scrollTop;
+    }
+
     window.requestAnimationFrame(() => {
       if (this.rootEl.contains(boardEl)) {
-        boardEl.scrollLeft = scrollLeft;
+        if (scrollLeft > 0) {
+          boardEl.scrollLeft = scrollLeft;
+        }
+        if (scrollTop > 0) {
+          boardEl.scrollTop = scrollTop;
+        }
       }
     });
   }
 
   private setupBoardScrollListener(boardEl: HTMLElement): void {
     boardEl.addEventListener("scroll", () => {
-      this.debouncedSaveBoardScrollPosition(boardEl.scrollLeft);
+      this.debouncedSaveBoardScrollPosition(
+        boardEl.scrollLeft,
+        boardEl.scrollTop,
+      );
     });
   }
 
-  private debouncedSaveBoardScrollPosition(scrollLeft: number): void {
+  private debouncedSaveBoardScrollPosition(
+    scrollLeft: number,
+    scrollTop: number,
+  ): void {
     if (this.scrollSaveTimeout !== null) {
       window.clearTimeout(this.scrollSaveTimeout);
     }
     this.scrollSaveTimeout = window.setTimeout(() => {
-      this.saveBoardScrollPosition(scrollLeft);
+      this.saveBoardScrollPosition(scrollLeft, scrollTop);
       this.scrollSaveTimeout = null;
     }, this.plugin.settings.scrollDebounceMs);
   }
 
-  private saveBoardScrollPosition(scrollLeft: number): void {
+  private saveBoardScrollPosition(scrollLeft: number, scrollTop: number): void {
     this.config?.set(BOARD_SCROLL_POSITION_KEY, String(scrollLeft));
+    this.config?.set(BOARD_SCROLL_TOP_POSITION_KEY, String(scrollTop));
   }
 
-  private loadBoardScrollPosition(): number {
-    const configValue = this.config?.get(BOARD_SCROLL_POSITION_KEY);
-    if (typeof configValue !== "string" || configValue.length === 0) {
-      return 0;
+  private loadBoardScrollPosition(): { scrollLeft: number; scrollTop: number } {
+    const scrollLeftValue = this.config?.get(BOARD_SCROLL_POSITION_KEY);
+    const scrollTopValue = this.config?.get(BOARD_SCROLL_TOP_POSITION_KEY);
+
+    let scrollLeft = 0;
+    let scrollTop = 0;
+
+    if (typeof scrollLeftValue === "string" && scrollLeftValue.length > 0) {
+      const parsedLeft = Number.parseInt(scrollLeftValue, 10);
+      if (!Number.isNaN(parsedLeft)) {
+        scrollLeft = parsedLeft;
+      }
     }
-    const parsed = Number.parseInt(configValue, 10);
-    return Number.isNaN(parsed) ? 0 : parsed;
+
+    if (typeof scrollTopValue === "string" && scrollTopValue.length > 0) {
+      const parsedTop = Number.parseInt(scrollTopValue, 10);
+      if (!Number.isNaN(parsedTop)) {
+        scrollTop = parsedTop;
+      }
+    }
+
+    return { scrollLeft, scrollTop };
   }
 
   private renderPlaceholder(): void {

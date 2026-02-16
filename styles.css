@@ -1,22 +1,39 @@
 .bases-kanban-container {
 	width: 100%;
-	height: auto;
+	height: 100%;
+	min-height: 100%;
+	display: flex;
+	flex-direction: column;
 	overflow: hidden;
 	padding: var(--size-4-3);
 	position: relative;
+	box-sizing: border-box;
 }
 
 /* Background layer with image, blur and brightness */
 .bases-kanban-background {
-	position: absolute;
-	top: 0;
-	left: 0;
-	right: 0;
-	bottom: 0;
+	position: fixed;
+	inset: 0;
+	width: 100vw;
+	height: 100vh;
 	background-size: cover;
 	background-position: center;
 	background-repeat: no-repeat;
 	z-index: 0;
+	pointer-events: none;
+}
+
+/* Dark scrim overlay for readability */
+.bases-kanban-background::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: radial-gradient(
+		ellipse at center,
+		transparent 0%,
+		rgba(0, 0, 0, 0.1) 50%,
+		rgba(0, 0, 0, 0.3) 100%
+	);
 	pointer-events: none;
 }
 
@@ -27,8 +44,11 @@
 	border-radius: var(--radius-m);
 	display: flex;
 	flex-direction: column;
-	overflow: hidden;
+	overflow: visible;
 	position: relative;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
+	backdrop-filter: blur(8px);
+	border: 1px solid var(--background-modifier-border);
 }
 
 .bases-kanban-placeholder {
@@ -42,12 +62,14 @@
 .bases-kanban-board {
 	display: flex;
 	gap: var(--size-4-3);
-	height: 100%;
+	flex: 1;
+	min-height: 0;
 	overflow-x: auto;
-	overflow-y: hidden;
+	overflow-y: auto;
 	outline: none;
 	position: relative;
 	z-index: 1;
+	align-items: flex-start;
 }
 
 .bases-kanban-column-header {
@@ -117,11 +139,11 @@
 }
 
 .bases-kanban-cards {
-	overflow-y: auto;
 	padding: var(--size-4-2);
 	display: flex;
 	flex-direction: column;
 	gap: var(--size-4-2);
+	flex: 1;
 }
 
 .bases-kanban-card {
@@ -129,6 +151,13 @@
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
 	padding: var(--size-4-2) var(--size-4-3);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+	transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+.bases-kanban-card:hover {
+	box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+	transform: translateY(-1px);
 }
 
 .bases-kanban-card.bases-kanban-card-selected {
