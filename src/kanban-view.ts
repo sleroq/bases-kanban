@@ -13,7 +13,6 @@ import {
 
 import type BasesKanbanPlugin from "./main";
 import {
-  logCacheEvent,
   logDebug,
   logDragEvent,
   logRenderEvent,
@@ -67,6 +66,17 @@ import {
   applyBackground,
   createBackgroundManagerState,
 } from "./kanban-view/background-manager";
+import {
+  type RenderedGroup,
+  type PartialRenderResult,
+  mergeGroupsByColumnKey,
+  sortGroupsByColumnOrder,
+  buildRenderedGroups,
+  computeRenderSignature,
+  canSkipFullRender,
+  computeColumnSnapshots,
+  canRenderPartially,
+} from "./kanban-view/render-pipeline";
 
 export class KanbanView extends BasesView {
   type = "kanban";
@@ -202,216 +212,8 @@ export class KanbanView extends BasesView {
     return false;
   }
 
-  private computeRenderSignature(
-    groups: BasesEntryGroup[],
-    displaySettings: {
-      cardTitleSource: string;
-      cardTitleMaxLength: number;
-      propertyValueSeparator: string;
-      tagPropertySuffix: string;
-      tagSaturation: number;
-      tagLightness: number;
-      tagAlpha: number;
-    },
-    localCardOrderByColumn: Map<string, string[]>,
-    selectedProperties: BasesPropertyId[],
-    groupByProperty: BasesPropertyId | null,
-  ): string {
-    const groupKeys = groups.map((g) => getColumnKey(g.key)).join("|");
-    const entryPaths = groups
-      .flatMap((g) => g.entries.map((e) => e.file.path))
-      .join("|");
-    const settingsHash = JSON.stringify(displaySettings);
-    const localOrderHash = JSON.stringify([
-      ...localCardOrderByColumn.entries(),
-    ]);
-
-    // Compute property values hash for visible properties
-    // This ensures re-render when card properties (like tags) change
-    const propertiesToTrack = selectedProperties.filter(
-      (propertyId) =>
-        propertyId !== "file.name" && propertyId !== groupByProperty,
-    );
-
-    const propertyValuesHash = this.computePropertyValuesHash(
-      groups,
-      propertiesToTrack,
-    );
-
-    const signature = `${groupKeys}::${entryPaths}::${settingsHash}::${localOrderHash}::${propertyValuesHash}`;
-
-    logCacheEvent("Computed render signature", {
-      groupCount: groups.length,
-      entryCount: groups.reduce((sum, g) => sum + g.entries.length, 0),
-      hasLocalOrder: localCardOrderByColumn.size > 0,
-      trackedProperties: propertiesToTrack.length,
-      signatureLength: signature.length,
-    });
-
-    return signature;
-  }
-
-  private computePropertyValuesHash(
-    groups: BasesEntryGroup[],
-    propertiesToTrack: BasesPropertyId[],
-  ): string {
-    if (propertiesToTrack.length === 0) {
-      return "";
-    }
-
-    const parts: string[] = [];
-
-    for (const group of groups) {
-      for (const entry of group.entries) {
-        const entryPath = entry.file.path;
-
-        for (const propertyId of propertiesToTrack) {
-          const value = entry.getValue(propertyId);
-          // Normalize value for consistent hashing
-          let valueStr: string;
-
-          if (value === null || value === undefined) {
-            valueStr = "__null__";
-          } else {
-            valueStr = String(value);
-          }
-
-          parts.push(`${entryPath}:${propertyId}=${valueStr}`);
-        }
-      }
-    }
-
-    // Use a simple hash function for the combined string
-    let hash = 0;
-    const combined = parts.join("|");
-
-    for (let i = 0; i < combined.length; i++) {
-      const char = combined.charCodeAt(i);
-      hash = ((hash << 5) - hash + char) | 0;
-    }
-
-    return hash.toString(36);
-  }
-
-  private canSkipFullRender(currentSignature: string): boolean {
-    if (!this.hasRenderedBoard || this.lastRenderSignature === null) {
-      logCacheEvent("Cannot skip - no previous render", {
-        hasRenderedBoard: this.hasRenderedBoard,
-        hasLastSignature: this.lastRenderSignature !== null,
-      });
-      return false;
-    }
-
-    if (currentSignature !== this.lastRenderSignature) {
-      logCacheEvent("Cannot skip - signature changed");
-      return false;
-    }
-
-    logCacheEvent("Signature match - skipping full render");
-    return true;
-  }
-
-  private computeColumnSnapshots(
-    renderedGroups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>,
-  ): Map<string, string[]> {
-    const snapshots = new Map<string, string[]>();
-    for (const { group, entries } of renderedGroups) {
-      const columnKey = getColumnKey(group.key);
-      snapshots.set(
-        columnKey,
-        entries.map((e) => e.file.path),
-      );
-    }
-    return snapshots;
-  }
-
-  private findChangedColumns(
-    previous: Map<string, string[]>,
-    current: Map<string, string[]>,
-  ): string[] {
-    const changed: string[] = [];
-
-    for (const [key, currentPaths] of current) {
-      const previousPaths = previous.get(key);
-      if (previousPaths === undefined) {
-        // New column
-        changed.push(key);
-        continue;
-      }
-      if (currentPaths.length !== previousPaths.length) {
-        changed.push(key);
-        continue;
-      }
-      for (let i = 0; i < currentPaths.length; i++) {
-        if (currentPaths[i] !== previousPaths[i]) {
-          changed.push(key);
-          break;
-        }
-      }
-    }
-
-    // Check for removed columns
-    for (const key of previous.keys()) {
-      if (!current.has(key)) {
-        changed.push(key);
-      }
-    }
-
-    return changed;
-  }
-
-  private canRenderPartially(
-    renderedGroups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>,
-  ): { canPartial: boolean; changedColumns: string[] } {
-    if (!this.hasRenderedBoard || this.lastColumnPathSnapshots.size === 0) {
-      return { canPartial: false, changedColumns: [] };
-    }
-
-    const currentSnapshots = this.computeColumnSnapshots(renderedGroups);
-    const changedColumns = this.findChangedColumns(
-      this.lastColumnPathSnapshots,
-      currentSnapshots,
-    );
-
-    // Check if board structure is unchanged
-    const boardStructureChanged =
-      currentSnapshots.size !== this.lastColumnPathSnapshots.size ||
-      changedColumns.some((key) => !this.lastColumnPathSnapshots.has(key));
-
-    if (boardStructureChanged) {
-      logCacheEvent("Cannot partial render - board structure changed", {
-        previousColumnCount: this.lastColumnPathSnapshots.size,
-        currentColumnCount: currentSnapshots.size,
-        newOrRemovedColumns: changedColumns.filter(
-          (k) =>
-            !this.lastColumnPathSnapshots.has(k) || !currentSnapshots.has(k),
-        ).length,
-      });
-      return { canPartial: false, changedColumns: [] };
-    }
-
-    if (changedColumns.length === 0) {
-      return { canPartial: false, changedColumns: [] };
-    }
-
-    // Limit partial render to reasonable number of changed columns
-    if (changedColumns.length > 5) {
-      logCacheEvent("Too many changed columns for partial render", {
-        changedCount: changedColumns.length,
-      });
-      return { canPartial: false, changedColumns: [] };
-    }
-
-    logCacheEvent("Can partial render", {
-      changedColumnCount: changedColumns.length,
-      changedColumns: changedColumns.join(","),
-    });
-
-    return { canPartial: true, changedColumns };
-  }
-
   private renderPartial(
-    renderedGroups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>,
+    renderedGroups: RenderedGroup[],
     changedColumnKeys: string[],
     context: RenderContext,
   ): void {
@@ -496,7 +298,7 @@ export class KanbanView extends BasesView {
 
     // Update global state
     this.refreshEntryIndexesFromRendered(renderedGroups);
-    this.lastColumnPathSnapshots = this.computeColumnSnapshots(renderedGroups);
+    this.lastColumnPathSnapshots = computeColumnSnapshots(renderedGroups);
 
     logRenderEvent("PARTIAL RENDER COMPLETE", {
       replacedColumns: changedColumnKeys.length,
@@ -533,7 +335,7 @@ export class KanbanView extends BasesView {
     logRenderEvent("render() called");
 
     const rawGroups: BasesEntryGroup[] = this.data?.groupedData ?? [];
-    const groups = this.mergeGroupsByColumnKey(rawGroups);
+    const groups = mergeGroupsByColumnKey(rawGroups);
 
     logRenderEvent("Data prepared", {
       rawGroupCount: rawGroups.length,
@@ -560,7 +362,7 @@ export class KanbanView extends BasesView {
       getPropertyCandidates(selectedProperties, this.allProperties),
     );
 
-    const currentSignature = this.computeRenderSignature(
+    const currentSignature = computeRenderSignature(
       groups,
       displaySettings,
       localCardOrderByColumn,
@@ -568,7 +370,7 @@ export class KanbanView extends BasesView {
       groupByProperty,
     );
 
-    if (this.canSkipFullRender(currentSignature)) {
+    if (canSkipFullRender(currentSignature, this.lastRenderSignature, this.hasRenderedBoard)) {
       logRenderEvent(
         "SKIPPED - full render not needed, updating cheap UI only",
       );
@@ -586,18 +388,16 @@ export class KanbanView extends BasesView {
       return;
     }
 
-    const orderedGroups = this.sortGroupsByColumnOrder(groups);
-    const renderedGroups = orderedGroups.map((group) => ({
-      group,
-      entries: this.applyLocalCardOrder(
-        getColumnKey(group.key),
-        group.entries,
-        localCardOrderByColumn,
-      ),
-    }));
+    const columnOrder = this.getColumnOrderFromConfig();
+    const orderedGroups = sortGroupsByColumnOrder(groups, columnOrder);
+    const renderedGroups = buildRenderedGroups(orderedGroups, localCardOrderByColumn);
 
     // Try partial render first (for cross-column moves or single-card adds)
-    const { canPartial, changedColumns } = this.canRenderPartially(renderedGroups);
+    const { canPartial, changedColumns }: PartialRenderResult = canRenderPartially(
+      renderedGroups,
+      this.lastColumnPathSnapshots,
+      this.hasRenderedBoard,
+    );
 
     if (canPartial && changedColumns.length > 0) {
       const context: RenderContext = {
@@ -628,7 +428,7 @@ export class KanbanView extends BasesView {
       this.renderPartial(renderedGroups, changedColumns, context);
 
       // Update signature and snapshots for next render
-      this.lastRenderSignature = this.computeRenderSignature(
+      this.lastRenderSignature = computeRenderSignature(
         groups,
         displaySettings,
         localCardOrderByColumn,
@@ -713,14 +513,14 @@ export class KanbanView extends BasesView {
     // Always restore vertical scroll from saved state
     this.restoreBoardScrollPosition(finalScrollLeft, savedScroll.scrollTop);
     this.hasRenderedBoard = true;
-    this.lastRenderSignature = this.computeRenderSignature(
+    this.lastRenderSignature = computeRenderSignature(
       groups,
       displaySettings,
       localCardOrderByColumn,
       selectedProperties,
       groupByProperty,
     );
-    this.lastColumnPathSnapshots = this.computeColumnSnapshots(renderedGroups);
+    this.lastColumnPathSnapshots = computeColumnSnapshots(renderedGroups);
     const scrollRestored = !this.hasRenderedBoard;
     this.hasRenderedBoard = true;
 
@@ -1021,46 +821,6 @@ export class KanbanView extends BasesView {
     });
   }
 
-  private applyLocalCardOrder(
-    columnKey: string,
-    entries: BasesEntry[],
-    localOrderByColumn: Map<string, string[]>,
-  ): BasesEntry[] {
-    const orderedPaths = localOrderByColumn.get(columnKey);
-    if (orderedPaths === undefined || orderedPaths.length === 0) {
-      return entries;
-    }
-
-    const entryByPath = new Map(
-      entries.map((entry) => [entry.file.path, entry]),
-    );
-    const nextEntries: BasesEntry[] = [];
-    const usedPaths = new Set<string>();
-
-    for (const path of orderedPaths) {
-      const entry = entryByPath.get(path);
-      if (entry === undefined) {
-        continue;
-      }
-
-      nextEntries.push(entry);
-      usedPaths.add(path);
-    }
-
-    const newEntries: BasesEntry[] = [];
-    for (const entry of entries) {
-      if (usedPaths.has(entry.file.path)) {
-        continue;
-      }
-
-      newEntries.push(entry);
-    }
-
-    nextEntries.unshift(...newEntries);
-
-    return nextEntries;
-  }
-
   private getLocalCardOrderByColumn(): Map<string, string[]> {
     const configValue = this.config?.get(LOCAL_CARD_ORDER_OPTION_KEY);
     const { order, cache } = parseLocalCardOrder(
@@ -1354,10 +1114,10 @@ export class KanbanView extends BasesView {
       return;
     }
 
-    const orderedGroups = this.sortGroupsByColumnOrder(
-      this.mergeGroupsByColumnKey(this.data?.groupedData ?? []),
-    );
-    const orderedKeys = orderedGroups.map((group) => getColumnKey(group.key));
+    const columnOrder = this.getColumnOrderFromConfig();
+    const groups = mergeGroupsByColumnKey(this.data?.groupedData ?? []);
+    const orderedGroups = sortGroupsByColumnOrder(groups, columnOrder);
+    const orderedKeys = orderedGroups.map((g) => getColumnKey(g.key));
     const sourceIndex = orderedKeys.indexOf(sourceColumnKey);
     const targetIndex = orderedKeys.indexOf(targetColumnKey);
     if (sourceIndex === -1 || targetIndex === -1) {
@@ -1387,55 +1147,6 @@ export class KanbanView extends BasesView {
   private handleColumnScroll(columnKey: string, scrollTop: number): void {
     // Save column scroll position for partial render restoration
     saveColumnScrollPosition(this.viewSessionId, columnKey, scrollTop);
-  }
-
-  private sortGroupsByColumnOrder(
-    groups: BasesEntryGroup[],
-  ): BasesEntryGroup[] {
-    const columnOrder = this.getColumnOrderFromConfig();
-    if (columnOrder.length === 0) {
-      return groups;
-    }
-
-    const orderMap = new Map(
-      columnOrder.map((columnKey, index) => [columnKey, index]),
-    );
-    return [...groups].sort((groupA, groupB) => {
-      const indexA =
-        orderMap.get(getColumnKey(groupA.key)) ?? Number.POSITIVE_INFINITY;
-      const indexB =
-        orderMap.get(getColumnKey(groupB.key)) ?? Number.POSITIVE_INFINITY;
-      if (
-        indexA === Number.POSITIVE_INFINITY &&
-        indexB === Number.POSITIVE_INFINITY
-      ) {
-        return 0;
-      }
-
-      return indexA - indexB;
-    });
-  }
-
-  private mergeGroupsByColumnKey(groups: BasesEntryGroup[]): BasesEntryGroup[] {
-    const mergedByColumnKey = new Map<string, BasesEntryGroup>();
-
-    for (const group of groups) {
-      const columnKey = getColumnKey(group.key);
-      const existing = mergedByColumnKey.get(columnKey);
-      if (existing === undefined) {
-        mergedByColumnKey.set(columnKey, {
-          key: group.key,
-          hasKey: group.hasKey,
-          entries: [...group.entries],
-        });
-        continue;
-      }
-
-      existing.hasKey = existing.hasKey || group.hasKey;
-      existing.entries.push(...group.entries);
-    }
-
-    return [...mergedByColumnKey.values()];
   }
 
   private getColumnOrderFromConfig(): string[] {
