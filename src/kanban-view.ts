@@ -177,8 +177,8 @@ export class KanbanView extends BasesView {
       logRenderEvent("Rendering placeholder (no group by)");
       if (this.svelteApp !== null) {
         this.unmountSvelteApp();
-        this.rootEl.empty();
       }
+      this.rootEl.empty();
       this.renderPlaceholder();
       this.hasRenderedBoard = false;
       return;
