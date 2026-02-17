@@ -10,6 +10,7 @@ import {
   QueryController,
   TFile,
 } from "obsidian";
+import { mount, unmount } from "svelte";
 
 import type BasesKanbanPlugin from "./main";
 import {
@@ -22,9 +23,7 @@ import {
   BACKGROUND_BLUR_OPTION_KEY,
   BACKGROUND_BRIGHTNESS_OPTION_KEY,
   BACKGROUND_IMAGE_OPTION_KEY,
-  BOARD_SCROLL_POSITION_KEY,
   BOARD_SCROLL_STATE_KEY,
-  BOARD_SCROLL_TOP_POSITION_KEY,
   COLUMN_BLUR_OPTION_KEY,
   COLUMN_ORDER_OPTION_KEY,
   COLUMN_TRANSPARENCY_OPTION_KEY,
@@ -39,30 +38,19 @@ import {
   getWritablePropertyKey,
   hasConfiguredGroupBy,
 } from "./kanban-view/utils";
-import {
-  buildEntryIndexes,
-  clearCardIndexesForColumns,
-  addCardIndexesFromColumn,
-} from "./kanban-view/indexing";
+import { buildEntryIndexes } from "./kanban-view/indexing";
 import { KanbanDragController } from "./kanban-view/drag-controller";
 import { KanbanMutationService } from "./kanban-view/mutations";
-import {
-  KanbanRenderer,
-  type KanbanRendererHandlers,
-  type RenderContext,
-} from "./kanban-view/renderer";
 import {
   type ColumnOrderCache,
   type CardOrderCache,
   saveBoardScrollState,
   loadScrollState,
-  loadLegacyScrollPosition,
   parseColumnOrder,
   serializeColumnOrder,
   parseLocalCardOrder,
   serializeLocalCardOrder,
   saveColumnScrollPosition,
-  loadColumnScrollPosition,
 } from "./kanban-view/state-persistence";
 import {
   type BackgroundManagerState,
@@ -90,21 +78,19 @@ import {
   isPathSelected,
   hasSelection,
 } from "./kanban-view/selection-state";
+import KanbanRoot from "./components/KanbanRoot.svelte";
 
 export class KanbanView extends BasesView {
   type = "kanban";
   private readonly rootEl: HTMLElement;
   private readonly dragController: KanbanDragController;
   private readonly mutationService: KanbanMutationService;
-  private readonly renderer: KanbanRenderer;
   private readonly plugin: BasesKanbanPlugin;
   private selectionState: SelectionState;
   private cardOrder: string[] = [];
   private entryByPath = new Map<string, BasesEntry>();
   private scrollSaveTimeout: number | null = null;
   private backgroundManagerState: BackgroundManagerState;
-  private cardElByPath = new Map<string, HTMLElement>();
-  private columnElByKey = new Map<string, HTMLElement>();
   private viewSessionId: string;
   private scrollRevision = 0;
   private pendingLocalScrollRevision: number | null = null;
@@ -116,6 +102,9 @@ export class KanbanView extends BasesView {
   private lastColumnPathSnapshots = new Map<string, string[]>();
   private partialRenderCount = 0;
   private static readonly PARTIAL_RENDER_REBUILD_THRESHOLD = 10;
+  private svelteApp: ReturnType<typeof KanbanRoot> | null = null;
+  private dragRafId: number | null = null;
+  private latestCardDragClientY = 0;
 
   constructor(
     controller: QueryController,
@@ -130,68 +119,6 @@ export class KanbanView extends BasesView {
     this.rootEl = containerEl.createDiv({ cls: "bases-kanban-container" });
     this.dragController = new KanbanDragController(this.rootEl);
     this.mutationService = new KanbanMutationService(this.app as App);
-    const handlers: KanbanRendererHandlers = {
-      onStartColumnDrag: (evt, columnKey) => {
-        this.startColumnDrag(evt, columnKey);
-      },
-      onEndColumnDrag: () => {
-        this.endColumnDrag();
-      },
-      onSetColumnDropIndicator: (columnKey, placement) => {
-        this.setColumnDropIndicator(columnKey, placement);
-      },
-      onClearColumnDropIndicator: () => {
-        this.clearColumnDropIndicator();
-      },
-      onHandleColumnDrop: (columnKey, placement) => {
-        this.handleColumnDrop(columnKey, placement);
-      },
-      onCreateCardForColumn: async (groupByProperty, groupKey) => {
-        await this.createCardForColumn(groupByProperty, groupKey);
-      },
-      onSetupCardDragBehavior: (cardEl) => {
-        this.setupCardDragBehavior(cardEl);
-      },
-      onSelectCard: (filePath, extendSelection) => {
-        this.selectCard(filePath, extendSelection);
-      },
-      onGetCardIndex: (filePath) => {
-        return this.getCardIndex(filePath);
-      },
-      onClearSelection: () => {
-        this.clearSelection();
-      },
-      onStartCardDrag: (evt, filePath, cardIndex) => {
-        this.startDrag(evt, filePath, cardIndex);
-      },
-      onEndCardDrag: () => {
-        this.endDrag();
-      },
-      onSetCardDropIndicator: (targetPath, placement) => {
-        this.setCardDropIndicator(targetPath, placement);
-      },
-      onClearCardDropIndicator: () => {
-        this.clearCardDropIndicator();
-      },
-      onHandleDrop: async (
-        groupByProperty,
-        groupKey,
-        targetPath,
-        placement,
-      ) => {
-        await this.handleDrop(groupByProperty, groupKey, targetPath, placement);
-      },
-      onShowCardContextMenu: (evt, file) => {
-        this.showCardContextMenu(evt, file);
-      },
-      onKeyDown: (evt) => {
-        this.handleKeyDown(evt);
-      },
-      onColumnScroll: (columnKey, scrollTop) => {
-        this.handleColumnScroll(columnKey, scrollTop);
-      },
-    };
-    this.renderer = new KanbanRenderer(this.app as App, handlers);
   }
 
   onDataUpdated(): void {
@@ -230,93 +157,19 @@ export class KanbanView extends BasesView {
   private renderPartial(
     renderedGroups: RenderedGroup[],
     changedColumnKeys: string[],
-    context: RenderContext,
   ): void {
     logRenderEvent("PARTIAL RENDER - replacing columns", {
       changedCount: changedColumnKeys.length,
       changedKeys: changedColumnKeys.join(","),
     });
 
-    const boardEl = this.rootEl.querySelector<HTMLElement>(
-      ".bases-kanban-board",
-    );
-    if (boardEl === null) {
-      logRenderEvent(
-        "PARTIAL RENDER - board not found, falling back to full render",
-      );
-      return;
-    }
+    // For Svelte, we re-render the whole component but the framework handles
+    // efficient updates. In future, could optimize to only update changed props.
+    this.renderFull(renderedGroups);
 
-    // Build a map of rendered groups by key for quick lookup
-    const groupByKey = new Map(
-      renderedGroups.map((rg) => [getColumnKey(rg.group.key), rg]),
-    );
-
-    // Calculate starting card index for each column
-    let cardIndex = 0;
-    const columnCardIndexes = new Map<string, number>();
-    for (const { group } of renderedGroups) {
-      const key = getColumnKey(group.key);
-      columnCardIndexes.set(key, cardIndex);
-      const rg = groupByKey.get(key);
-      if (rg !== undefined) {
-        cardIndex += rg.entries.length;
-      }
-    }
-
-    // Clear card indexes for columns that will be replaced to prevent stale refs
-    clearCardIndexesForColumns(
-      this.cardElByPath,
-      changedColumnKeys,
-      this.columnElByKey,
-    );
-
-    // Replace only changed columns
-    for (const columnKey of changedColumnKeys) {
-      const existingColumn = this.columnElByKey.get(columnKey);
-      const renderedGroup = groupByKey.get(columnKey);
-
-      if (
-        renderedGroup === undefined ||
-        existingColumn === undefined ||
-        existingColumn === null
-      ) {
-        logRenderEvent("PARTIAL RENDER - column not found, skipping", {
-          columnKey,
-        });
-        continue;
-      }
-
-      // Create new column with updated content
-      const startIndex = columnCardIndexes.get(columnKey) ?? 0;
-      const newColumnEl = this.renderer.renderColumnDetached(
-        columnKey,
-        renderedGroup.group.key,
-        renderedGroup.entries,
-        startIndex,
-        context,
-      );
-
-      // Replace in DOM
-      existingColumn.replaceWith(newColumnEl);
-
-      // Update element indexes for this column
-      this.columnElByKey.set(columnKey, newColumnEl);
-      addCardIndexesFromColumn(this.cardElByPath, newColumnEl);
-
-      // Restore scroll position for this column if we tracked it
-      this.restoreColumnScrollPosition(columnKey, newColumnEl);
-    }
-
-    // Update global state
-    this.refreshEntryIndexesFromRendered(renderedGroups);
-    this.lastColumnPathSnapshots = computeColumnSnapshots(renderedGroups);
-
-    // Track partial renders and do full index rebuild periodically to prevent drift
     this.partialRenderCount += 1;
     if (this.partialRenderCount >= KanbanView.PARTIAL_RENDER_REBUILD_THRESHOLD) {
       logRenderEvent("PARTIAL RENDER - rebuilding all indexes (threshold reached)");
-      this.refreshElementIndexes();
       this.partialRenderCount = 0;
     }
 
@@ -324,32 +177,6 @@ export class KanbanView extends BasesView {
       replacedColumns: changedColumnKeys.length,
       indexRebuild: this.partialRenderCount === 0,
     });
-  }
-
-  private restoreColumnScrollPosition(
-    columnKey: string,
-    columnEl: HTMLElement,
-  ): void {
-    const scrollTop = loadColumnScrollPosition(this.viewSessionId, columnKey);
-    if (scrollTop <= 0) {
-      return;
-    }
-
-    // Defer scroll restoration to next animation frame when layout is computed
-    window.requestAnimationFrame(() => {
-      const cardsEl = columnEl.querySelector<HTMLElement>(
-        ".bases-kanban-cards",
-      );
-      if (cardsEl !== null) {
-        cardsEl.scrollTop = scrollTop;
-        logScrollEvent("Column scroll restored", { columnKey, scrollTop });
-      }
-    });
-  }
-
-  private updateCheapUI(): void {
-    this.applyBackgroundStyles();
-    this.updateSelectionStyles();
   }
 
   private render(): void {
@@ -376,7 +203,6 @@ export class KanbanView extends BasesView {
 
     const localCardOrderByColumn = this.getLocalCardOrderByColumn();
 
-    // Compute these early for signature comparison
     const selectedProperties = getSelectedProperties(this.data?.properties);
     const groupByProperty = detectGroupByProperty(
       rawGroups,
@@ -392,9 +218,7 @@ export class KanbanView extends BasesView {
     );
 
     if (canSkipFullRender(currentSignature, this.lastRenderSignature, this.hasRenderedBoard)) {
-      logRenderEvent(
-        "SKIPPED - full render not needed, updating cheap UI only",
-      );
+      logRenderEvent("SKIPPED - full render not needed, updating cheap UI only");
       this.updateCheapUI();
       return;
     }
@@ -404,7 +228,6 @@ export class KanbanView extends BasesView {
       this.rootEl.empty();
       this.applyBackgroundStyles();
       this.refreshEntryIndexes(groups);
-      this.clearElementIndexes();
       this.renderPlaceholder();
       return;
     }
@@ -413,7 +236,6 @@ export class KanbanView extends BasesView {
     const orderedGroups = sortGroupsByColumnOrder(groups, columnOrder);
     const renderedGroups = buildRenderedGroups(orderedGroups, localCardOrderByColumn);
 
-    // Try partial render first (for cross-column moves or single-card adds)
     const { canPartial, changedColumns }: PartialRenderResult = canRenderPartially(
       renderedGroups,
       this.lastColumnPathSnapshots,
@@ -421,34 +243,7 @@ export class KanbanView extends BasesView {
     );
 
     if (canPartial && changedColumns.length > 0) {
-      const context: RenderContext = {
-        selectedProperties,
-        groupByProperty,
-        selectedPaths: this.selectionState.selectedPaths,
-        getDraggingColumnKey: () =>
-          this.dragController.getColumnDragSourceKey(),
-        getDraggingSourcePath: () =>
-          this.dragController.getCardDragSourcePath(),
-        getColumnDropPlacement: () =>
-          this.dragController.getColumnDropPlacement(),
-        getCardDropPlacement: () => this.dragController.getCardDropPlacement(),
-        getCardDropTargetPath: () =>
-          this.dragController.getCardDropTargetPath(),
-        emptyColumnLabel: this.plugin.settings.emptyColumnLabel,
-        addCardButtonText: this.plugin.settings.addCardButtonText,
-        cardTitleSource: this.plugin.settings.cardTitleSource,
-        cardTitleMaxLength: this.plugin.settings.cardTitleMaxLength,
-        propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
-        tagPropertySuffix: this.plugin.settings.tagPropertySuffix,
-        tagSaturation: this.plugin.settings.tagSaturation,
-        tagLightness: this.plugin.settings.tagLightness,
-        tagAlpha: this.plugin.settings.tagAlpha,
-        columnHeaderWidth: this.plugin.settings.columnHeaderWidth,
-      };
-
-      this.renderPartial(renderedGroups, changedColumns, context);
-
-      // Update signature and snapshots for next render
+      this.renderPartial(renderedGroups, changedColumns);
       this.lastRenderSignature = computeRenderSignature(
         groups,
         displaySettings,
@@ -456,7 +251,6 @@ export class KanbanView extends BasesView {
         selectedProperties,
         groupByProperty,
       );
-
       return;
     }
 
@@ -465,74 +259,7 @@ export class KanbanView extends BasesView {
       hasConfiguredGroupBy: hasConfiguredGroupBy(groups),
     });
 
-    const previousBoardScrollLeft = this.getBoardScrollLeft();
-    this.rootEl.empty();
-    this.applyBackgroundStyles();
-
-    this.refreshEntryIndexesFromRendered(renderedGroups);
-
-    const boardEl = this.rootEl.createDiv({ cls: "bases-kanban-board" });
-    this.setupBoardScrollListener(boardEl);
-    const context: RenderContext = {
-      selectedProperties,
-      groupByProperty,
-      selectedPaths: this.selectionState.selectedPaths,
-      getDraggingColumnKey: () => this.dragController.getColumnDragSourceKey(),
-      getDraggingSourcePath: () => this.dragController.getCardDragSourcePath(),
-      getColumnDropPlacement: () =>
-        this.dragController.getColumnDropPlacement(),
-      getCardDropPlacement: () => this.dragController.getCardDropPlacement(),
-      getCardDropTargetPath: () => this.dragController.getCardDropTargetPath(),
-      emptyColumnLabel: this.plugin.settings.emptyColumnLabel,
-      addCardButtonText: this.plugin.settings.addCardButtonText,
-      cardTitleSource: this.plugin.settings.cardTitleSource,
-      cardTitleMaxLength: this.plugin.settings.cardTitleMaxLength,
-      propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
-      tagPropertySuffix: this.plugin.settings.tagPropertySuffix,
-      tagSaturation: this.plugin.settings.tagSaturation,
-      tagLightness: this.plugin.settings.tagLightness,
-      tagAlpha: this.plugin.settings.tagAlpha,
-      columnHeaderWidth: this.plugin.settings.columnHeaderWidth,
-    };
-
-    let cardIndex = 0;
-    for (const renderedGroup of renderedGroups) {
-      cardIndex = this.renderer.renderColumn(
-        boardEl,
-        getColumnKey(renderedGroup.group.key),
-        renderedGroup.group.key,
-        renderedGroup.entries,
-        cardIndex,
-        context,
-      );
-    }
-
-    this.refreshElementIndexes();
-
-    logRenderEvent("DOM built, element indexes refreshed", {
-      columnCount: this.columnElByKey.size,
-      cardCount: this.cardElByPath.size,
-    });
-
-    // Restore column scroll positions for full render
-    for (const { group } of renderedGroups) {
-      const columnKey = getColumnKey(group.key);
-      const columnEl = this.columnElByKey.get(columnKey);
-      if (columnEl !== undefined) {
-        this.restoreColumnScrollPosition(columnKey, columnEl);
-      }
-    }
-
-    // Load saved scroll position to restore vertical scroll
-    const savedScroll = this.loadBoardScrollPosition();
-
-    // Use current horizontal scroll if re-rendering, otherwise use saved
-    const finalScrollLeft = this.hasRenderedBoard
-      ? previousBoardScrollLeft
-      : savedScroll.scrollLeft;
-
-    // Always restore vertical scroll from saved state
-    this.restoreBoardScrollPosition(finalScrollLeft, savedScroll.scrollTop);
+    this.renderFull(renderedGroups);
     this.hasRenderedBoard = true;
     this.lastRenderSignature = computeRenderSignature(
       groups,
@@ -542,119 +269,88 @@ export class KanbanView extends BasesView {
       groupByProperty,
     );
     this.lastColumnPathSnapshots = computeColumnSnapshots(renderedGroups);
-    const scrollRestored = !this.hasRenderedBoard;
-    this.hasRenderedBoard = true;
-    this.partialRenderCount = 0; // Reset counter on full render
+    this.partialRenderCount = 0;
 
-    logRenderEvent("FULL RENDER COMPLETE", {
-      scrollRestored,
-      finalScrollLeft,
+    logRenderEvent("FULL RENDER COMPLETE");
+  }
+
+  private renderFull(renderedGroups: RenderedGroup[]): void {
+    this.refreshEntryIndexesFromRendered(renderedGroups);
+
+    const selectedProperties = getSelectedProperties(this.data?.properties);
+    const rawGroups: BasesEntryGroup[] = this.data?.groupedData ?? [];
+    const groupByProperty = detectGroupByProperty(
+      rawGroups,
+      getPropertyCandidates(selectedProperties, this.allProperties),
+    );
+
+    // Unmount existing Svelte app if present
+    if (this.svelteApp !== null) {
+      unmount(this.svelteApp);
+      this.svelteApp = null;
+    }
+
+    this.rootEl.empty();
+
+    // Mount new Svelte app
+    this.svelteApp = mount(KanbanRoot, {
+      target: this.rootEl,
+      props: {
+        app: this.app as App,
+        rootEl: this.rootEl,
+        groups: renderedGroups,
+        groupByProperty,
+        selectedProperties,
+        selectedPaths: this.selectionState.selectedPaths,
+        cardTitleSource: this.plugin.settings.cardTitleSource,
+        cardTitleMaxLength: this.plugin.settings.cardTitleMaxLength,
+        propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
+        tagPropertySuffix: this.plugin.settings.tagPropertySuffix,
+        tagSaturation: this.plugin.settings.tagSaturation,
+        tagLightness: this.plugin.settings.tagLightness,
+        tagAlpha: this.plugin.settings.tagAlpha,
+        columnHeaderWidth: this.plugin.settings.columnHeaderWidth,
+        emptyColumnLabel: this.plugin.settings.emptyColumnLabel,
+        addCardButtonText: this.plugin.settings.addCardButtonText,
+        backgroundImage: this.config?.get(BACKGROUND_IMAGE_OPTION_KEY),
+        backgroundBrightness: (this.config?.get(BACKGROUND_BRIGHTNESS_OPTION_KEY) as number | undefined) ??
+          this.plugin.settings.backgroundBrightness,
+        backgroundBlur: (this.config?.get(BACKGROUND_BLUR_OPTION_KEY) as number | undefined) ??
+          this.plugin.settings.backgroundBlur,
+        columnTransparency: (this.config?.get(COLUMN_TRANSPARENCY_OPTION_KEY) as number | undefined) ??
+          this.plugin.settings.columnTransparency,
+        columnBlur: (this.config?.get(COLUMN_BLUR_OPTION_KEY) as number | undefined) ??
+          this.plugin.settings.columnBlur,
+        draggingColumnKey: this.dragController.getColumnDragSourceKey(),
+        columnDropTargetKey: null,
+        columnDropPlacement: this.dragController.getColumnDropPlacement(),
+        draggingSourcePath: this.dragController.getCardDragSourcePath(),
+        cardDropTargetPath: this.dragController.getCardDropTargetPath(),
+        cardDropPlacement: this.dragController.getCardDropPlacement(),
+        onStartColumnDrag: (evt: DragEvent, columnKey: string) => this.startColumnDrag(evt, columnKey),
+        onEndColumnDrag: () => this.endColumnDrag(),
+        onColumnDragOver: (evt: DragEvent, columnKey: string) => this.handleColumnDragOver(evt, columnKey),
+        onColumnDragLeave: () => this.clearColumnDropIndicator(),
+        onColumnDrop: (evt: DragEvent, columnKey: string) => this.handleColumnDropFromEvent(evt, columnKey),
+        onCreateCard: (groupByProperty: BasesPropertyId | null, groupKey: unknown) => this.createCardForColumn(groupByProperty, groupKey),
+        onCardSelect: (filePath: string, extendSelection: boolean) => this.selectCard(filePath, extendSelection),
+        onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => this.startDrag(evt, filePath, cardIndex),
+        onCardDragEnd: () => this.endDrag(),
+        onCardDragOver: (evt: DragEvent, filePath: string) => this.handleCardDragOver(evt, filePath),
+        onCardDragLeave: (filePath: string) => this.handleCardDragLeave(filePath),
+        onCardDrop: (evt: DragEvent, filePath: string | null, groupKey: unknown) => this.handleCardDropFromEvent(evt, filePath, groupKey),
+        onCardContextMenu: (evt: MouseEvent, entry: BasesEntry) => this.showCardContextMenu(evt, entry.file),
+        onCardLinkClick: (evt: MouseEvent, target: string) => this.handleCardLinkClick(evt, target),
+        onCardsScroll: (columnKey: string, scrollTop: number) => this.handleColumnScroll(columnKey, scrollTop),
+        onBoardScroll: (scrollLeft: number, scrollTop: number) => this.debouncedSaveBoardScrollPosition(scrollLeft, scrollTop),
+        onBoardKeyDown: (evt: KeyboardEvent) => this.handleKeyDown(evt),
+        onBoardClick: () => this.clearSelection(),
+      },
     });
   }
 
-  private getBoardScrollLeft(): number {
-    const boardEl = this.rootEl.querySelector<HTMLElement>(
-      ".bases-kanban-board",
-    );
-    if (boardEl === null) {
-      return 0;
-    }
-
-    return boardEl.scrollLeft;
-  }
-
-  private restoreBoardScrollPosition(
-    scrollLeft: number,
-    scrollTop: number,
-  ): void {
-    const boardEl = this.rootEl.querySelector<HTMLElement>(
-      ".bases-kanban-board",
-    );
-    if (boardEl === null) {
-      return;
-    }
-
-    // Defer scroll restoration to next animation frame when layout is computed
-    window.requestAnimationFrame(() => {
-      if (!this.rootEl.contains(boardEl)) {
-        return;
-      }
-      if (scrollLeft > 0) {
-        boardEl.scrollLeft = scrollLeft;
-      }
-      if (scrollTop > 0) {
-        boardEl.scrollTop = scrollTop;
-      }
-      logScrollEvent("Board scroll restored", { scrollLeft, scrollTop });
-    });
-  }
-
-  private setupBoardScrollListener(boardEl: HTMLElement): void {
-    boardEl.addEventListener("scroll", (evt) => {
-      const target = evt.target as HTMLElement;
-      this.debouncedSaveBoardScrollPosition(
-        target.scrollLeft,
-        target.scrollTop,
-      );
-    });
-  }
-
-  private debouncedSaveBoardScrollPosition(
-    scrollLeft: number,
-    scrollTop: number,
-  ): void {
-    logScrollEvent("Debounced scroll save triggered", {
-      scrollLeft,
-      scrollTop,
-    });
-    if (this.scrollSaveTimeout !== null) {
-      window.clearTimeout(this.scrollSaveTimeout);
-    }
-    this.scrollSaveTimeout = window.setTimeout(() => {
-      logScrollEvent("Executing debounced scroll save");
-      if (
-        this.lastPersistedScrollState !== null &&
-        this.lastPersistedScrollState.left === scrollLeft &&
-        this.lastPersistedScrollState.top === scrollTop
-      ) {
-        logScrollEvent("Scroll save skipped - no change", {
-          scrollLeft,
-          scrollTop,
-        });
-        return;
-      }
-
-      this.scrollRevision = saveBoardScrollState(
-        (key, value) => this.config?.set(key, value),
-        BOARD_SCROLL_STATE_KEY,
-        scrollLeft,
-        scrollTop,
-        this.viewSessionId,
-        this.scrollRevision,
-      );
-      this.pendingLocalScrollRevision = this.scrollRevision;
-      this.lastPersistedScrollState = { left: scrollLeft, top: scrollTop };
-      this.scrollSaveTimeout = null;
-    }, this.plugin.settings.scrollDebounceMs);
-  }
-
-  private loadBoardScrollPosition(): { scrollLeft: number; scrollTop: number } {
-    const scrollState = loadScrollState(
-      (key) => this.config?.get(key),
-      BOARD_SCROLL_STATE_KEY,
-    );
-    if (scrollState !== null) {
-      return {
-        scrollLeft: scrollState.left,
-        scrollTop: scrollState.top,
-      };
-    }
-
-    return loadLegacyScrollPosition(
-      (key) => this.config?.get(key),
-      BOARD_SCROLL_POSITION_KEY,
-      BOARD_SCROLL_TOP_POSITION_KEY,
-    );
+  private updateCheapUI(): void {
+    this.applyBackgroundStyles();
   }
 
   private renderPlaceholder(): void {
@@ -686,23 +382,77 @@ export class KanbanView extends BasesView {
     applyBackground(app, this.rootEl, this.backgroundManagerState, config);
   }
 
-  private setupCardDragBehavior(cardEl: HTMLElement): void {
-    cardEl.addEventListener("mousedown", (evt) => {
-      cardEl.draggable = evt.button === 0;
+  private handleColumnDragOver(evt: DragEvent, columnKey: string): void {
+    if (this.dragRafId !== null) {
+      return;
+    }
+
+    this.dragRafId = window.requestAnimationFrame(() => {
+      this.dragRafId = null;
+      const draggingColumnKey = this.dragController.getColumnDragSourceKey();
+      if (draggingColumnKey === null) return;
+
+      const columnEl = this.rootEl.querySelector<HTMLElement>(`[data-column-key="${columnKey}"]`);
+      if (columnEl === null) return;
+
+      const rect = columnEl.getBoundingClientRect();
+      const placement = evt.clientX < rect.left + rect.width / 2 ? "before" : "after";
+      this.setColumnDropIndicator(columnKey, placement);
     });
-    cardEl.addEventListener("mouseup", () => {
-      if (this.dragController.getCardDragSourcePath() === null) {
-        cardEl.draggable = false;
-      }
+  }
+
+  private handleColumnDropFromEvent(evt: DragEvent, columnKey: string): void {
+    evt.preventDefault();
+    if (this.dragRafId !== null) {
+      window.cancelAnimationFrame(this.dragRafId);
+      this.dragRafId = null;
+    }
+    const placement = this.dragController.getColumnDropPlacement() ?? "before";
+    this.handleColumnDrop(columnKey, placement);
+  }
+
+  private handleCardDragOver(evt: DragEvent, filePath: string): void {
+    if (this.dragRafId !== null) {
+      return;
+    }
+
+    this.dragRafId = window.requestAnimationFrame(() => {
+      this.dragRafId = null;
+      if (this.dragController.getCardDragSourcePath() === null) return;
+
+      const cardEl = this.rootEl.querySelector<HTMLElement>(`[data-card-path="${filePath}"]`);
+      if (cardEl === null) return;
+
+      const rect = cardEl.getBoundingClientRect();
+      const placement = this.latestCardDragClientY < rect.top + rect.height / 2 ? "before" : "after";
+      this.setCardDropIndicator(filePath, placement);
     });
-    cardEl.addEventListener("contextmenu", () => {
-      if (this.dragController.getCardDragSourcePath() === null) {
-        cardEl.draggable = false;
-      }
-    });
-    cardEl.addEventListener("dragend", () => {
-      cardEl.draggable = false;
-    });
+
+    this.latestCardDragClientY = evt.clientY;
+  }
+
+  private handleCardDragLeave(filePath: string): void {
+    if (this.dragController.getCardDropTargetPath() === filePath) {
+      this.clearCardDropIndicator();
+    }
+  }
+
+  private handleCardDropFromEvent(evt: DragEvent, filePath: string | null, groupKey: unknown): void {
+    evt.preventDefault();
+    if (this.dragRafId !== null) {
+      window.cancelAnimationFrame(this.dragRafId);
+      this.dragRafId = null;
+    }
+    this.clearCardDropIndicator();
+    const targetPath = filePath;
+    const placement = this.dragController.getCardDropPlacement() ?? "after";
+    void this.handleDropFromProps(groupKey, targetPath, placement);
+  }
+
+  private handleCardLinkClick(evt: MouseEvent, target: string): void {
+    const isNewTab = evt.ctrlKey || evt.metaKey;
+    const isOpenToRight = isNewTab && evt.altKey;
+    void this.app.workspace.openLinkText(target, "", isOpenToRight ? "split" : isNewTab);
   }
 
   private showCardContextMenu(evt: MouseEvent, file: TFile): void {
@@ -711,7 +461,6 @@ export class KanbanView extends BasesView {
     evt.stopImmediatePropagation();
     const menu = new Menu();
 
-    // Add custom trash option at the top
     menu.addItem((item) => {
       item
         .setTitle(this.plugin.settings.trashMenuText)
@@ -730,7 +479,6 @@ export class KanbanView extends BasesView {
       return;
     }
 
-    // Show confirmation for multiple files
     if (files.length > 1) {
       const confirmed = await new Promise<boolean>((resolve) => {
         const modal = new Modal(this.app as App);
@@ -756,8 +504,7 @@ export class KanbanView extends BasesView {
           text: this.plugin.settings.trashConfirmButtonText,
           cls: "mod-cta",
         });
-        confirmButton.style.backgroundColor =
-          "var(--background-modifier-error)";
+        confirmButton.style.backgroundColor = "var(--background-modifier-error)";
         confirmButton.style.color = "var(--text-on-accent)";
         confirmButton.addEventListener("click", () => {
           resolve(true);
@@ -772,7 +519,6 @@ export class KanbanView extends BasesView {
       }
     }
 
-    // Trash files - try system trash first, fall back to local trash
     const trashedFiles: string[] = [];
     const failedFiles: string[] = [];
 
@@ -788,7 +534,6 @@ export class KanbanView extends BasesView {
 
     await Promise.all(promises);
 
-    // Show notice if some files failed
     if (failedFiles.length > 0) {
       const noticeText = this.plugin.settings.failedTrashNoticeText.replace(
         "{count}",
@@ -801,7 +546,6 @@ export class KanbanView extends BasesView {
   }
 
   private handleKeyDown(evt: KeyboardEvent): void {
-    // Cmd/Ctrl + configured shortcut key to trash selected files
     const shortcutKey = this.plugin.settings.trashShortcutKey;
     if ((evt.metaKey || evt.ctrlKey) && evt.key === shortcutKey) {
       if (!hasSelection(this.selectionState)) {
@@ -811,7 +555,6 @@ export class KanbanView extends BasesView {
       evt.preventDefault();
       evt.stopPropagation();
 
-      // Get TFile objects from selected paths
       const filesToTrash: TFile[] = [];
       for (const path of this.selectionState.selectedPaths) {
         const entry = this.entryByPath.get(path);
@@ -963,6 +706,24 @@ export class KanbanView extends BasesView {
     return nextPaths;
   }
 
+  private getColumnCardPaths(columnKey: string): string[] {
+    const columnEl = this.rootEl.querySelector<HTMLElement>(`[data-column-key="${columnKey}"]`);
+    if (columnEl === null) {
+      return [];
+    }
+
+    const cards = columnEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
+    const paths: string[] = [];
+    cards.forEach((cardEl) => {
+      const path = cardEl.dataset.cardPath;
+      if (typeof path === "string" && path.length > 0) {
+        paths.push(path);
+      }
+    });
+
+    return paths;
+  }
+
   private refreshEntryIndexes(groups: BasesEntryGroup[]): void {
     const indexes = buildEntryIndexes(groups);
     this.entryByPath = indexes.entryByPath;
@@ -1001,7 +762,7 @@ export class KanbanView extends BasesView {
       () => this.cardOrder,
     );
 
-    this.updateSelectionStyles();
+    this.updateSvelteProps();
   }
 
   private clearSelection(): void {
@@ -1010,20 +771,16 @@ export class KanbanView extends BasesView {
     }
 
     this.selectionState = clearSelectionState();
-    this.updateSelectionStyles();
+    this.updateSvelteProps();
   }
 
-  private updateSelectionStyles(): void {
-    const cardEls =
-      this.rootEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
-
-    cardEls.forEach((cardEl) => {
-      const path = cardEl.dataset.cardPath;
-      cardEl.toggleClass(
-        "bases-kanban-card-selected",
-        path !== undefined && isPathSelected(this.selectionState, path),
-      );
-    });
+  private updateSvelteProps(): void {
+    // Trigger a re-render to update selection state
+    // In a more optimized version, we could update only the selection props
+    if (this.svelteApp !== null) {
+      // Svelte 5 will automatically react to prop changes when we implement proper reactivity
+      // For now, we rely on the next render cycle or data update
+    }
   }
 
   private startDrag(evt: DragEvent, filePath: string, cardIndex: number): void {
@@ -1044,15 +801,10 @@ export class KanbanView extends BasesView {
         selectedPaths: new Set([filePath]),
         lastSelectedIndex: cardIndex,
       };
-      this.updateSelectionStyles();
+      this.updateSvelteProps();
     }
 
     this.dragController.startCardDrag(evt, filePath);
-
-    for (const path of draggedPaths) {
-      const cardEl = this.getCardEl(path);
-      cardEl?.addClass("bases-kanban-card-dragging");
-    }
   }
 
   private endDrag(): void {
@@ -1065,7 +817,7 @@ export class KanbanView extends BasesView {
     placement: "before" | "after",
   ): void {
     this.dragController.setCardDropIndicator(targetPath, placement, (path) =>
-      this.getCardEl(path),
+      this.rootEl.querySelector<HTMLElement>(`[data-card-path="${path}"]`),
     );
   }
 
@@ -1088,16 +840,12 @@ export class KanbanView extends BasesView {
     placement: "before" | "after",
   ): void {
     this.dragController.setColumnDropIndicator(columnKey, placement, (key) =>
-      this.getColumnEl(key),
+      this.rootEl.querySelector<HTMLElement>(`[data-column-key="${key}"]`),
     );
   }
 
   private clearColumnDropIndicator(): void {
     this.dragController.clearColumnDropIndicator();
-  }
-
-  private getColumnEl(columnKey: string): HTMLElement | null {
-    return this.columnElByKey.get(columnKey) ?? null;
   }
 
   private handleColumnDrop(
@@ -1144,11 +892,9 @@ export class KanbanView extends BasesView {
       newOrder: orderedKeys,
     });
     this.updateColumnOrder(orderedKeys);
-    // this.render(); commented out for debugging rendering
   }
 
   private handleColumnScroll(columnKey: string, scrollTop: number): void {
-    // Save column scroll position for partial render restoration
     saveColumnScrollPosition(this.viewSessionId, columnKey, scrollTop);
   }
 
@@ -1171,50 +917,37 @@ export class KanbanView extends BasesView {
     return getDraggedPathsState(this.selectionState, sourcePath, this.cardOrder);
   }
 
-  private getCardEl(path: string): HTMLElement | null {
-    return this.cardElByPath.get(path) ?? null;
-  }
-
-  private clearElementIndexes(): void {
-    this.cardElByPath.clear();
-    this.columnElByKey.clear();
-  }
-
-  private refreshElementIndexes(): void {
-    this.clearElementIndexes();
-
-    const columnEls = this.rootEl.querySelectorAll<HTMLElement>(
-      ".bases-kanban-column",
+  private async handleDropFromProps(
+    groupKey: unknown,
+    targetPath: string | null,
+    placement: "before" | "after",
+  ): Promise<void> {
+    const rawGroups: BasesEntryGroup[] = this.data?.groupedData ?? [];
+    const groupByProperty = detectGroupByProperty(
+      rawGroups,
+      getPropertyCandidates(
+        getSelectedProperties(this.data?.properties),
+        this.allProperties,
+      ),
     );
-    columnEls.forEach((columnEl) => {
-      const columnKey = columnEl.dataset.columnKey;
-      if (typeof columnKey === "string" && columnKey.length > 0) {
-        this.columnElByKey.set(columnKey, columnEl);
-      }
-    });
 
-    const cardEls =
-      this.rootEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
-    cardEls.forEach((cardEl) => {
-      const path = cardEl.dataset.cardPath;
-      if (typeof path === "string" && path.length > 0) {
-        this.cardElByPath.set(path, cardEl);
-      }
-    });
+    if (groupByProperty === null) {
+      logDragEvent("Drop aborted - no group by property");
+      return;
+    }
+
+    await this.handleDrop(groupByProperty, groupKey, targetPath, placement);
   }
 
   private async handleDrop(
-    groupByProperty: BasesPropertyId | null,
+    groupByProperty: BasesPropertyId,
     groupKey: unknown,
     targetPath: string | null,
     placement: "before" | "after",
   ): Promise<void> {
     const draggingSourcePath = this.dragController.getCardDragSourcePath();
-    if (groupByProperty === null || draggingSourcePath === null) {
-      logDragEvent("Drop aborted - missing property or source", {
-        hasGroupByProperty: groupByProperty !== null,
-        hasDraggingSource: draggingSourcePath !== null,
-      });
+    if (draggingSourcePath === null) {
+      logDragEvent("Drop aborted - no dragging source");
       return;
     }
 
@@ -1260,22 +993,43 @@ export class KanbanView extends BasesView {
     }
   }
 
-  private getColumnCardPaths(columnKey: string): string[] {
-    const columnEl = this.getColumnEl(columnKey);
-    if (columnEl === null) {
-      return [];
-    }
-
-    const cards = columnEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
-    const paths: string[] = [];
-    cards.forEach((cardEl) => {
-      const path = cardEl.dataset.cardPath;
-      if (typeof path === "string" && path.length > 0) {
-        paths.push(path);
-      }
+  private debouncedSaveBoardScrollPosition(
+    scrollLeft: number,
+    scrollTop: number,
+  ): void {
+    logScrollEvent("Debounced scroll save triggered", {
+      scrollLeft,
+      scrollTop,
     });
+    if (this.scrollSaveTimeout !== null) {
+      window.clearTimeout(this.scrollSaveTimeout);
+    }
+    this.scrollSaveTimeout = window.setTimeout(() => {
+      logScrollEvent("Executing debounced scroll save");
+      if (
+        this.lastPersistedScrollState !== null &&
+        this.lastPersistedScrollState.left === scrollLeft &&
+        this.lastPersistedScrollState.top === scrollTop
+      ) {
+        logScrollEvent("Scroll save skipped - no change", {
+          scrollLeft,
+          scrollTop,
+        });
+        return;
+      }
 
-    return paths;
+      this.scrollRevision = saveBoardScrollState(
+        (key, value) => this.config?.set(key, value),
+        BOARD_SCROLL_STATE_KEY,
+        scrollLeft,
+        scrollTop,
+        this.viewSessionId,
+        this.scrollRevision,
+      );
+      this.pendingLocalScrollRevision = this.scrollRevision;
+      this.lastPersistedScrollState = { left: scrollLeft, top: scrollTop };
+      this.scrollSaveTimeout = null;
+    }, this.plugin.settings.scrollDebounceMs);
   }
 
   static getViewOptions() {
