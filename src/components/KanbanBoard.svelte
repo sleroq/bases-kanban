@@ -27,7 +27,6 @@
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onCardDragEnd: () => void;
-    onSetCardDropTarget: (targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null) => void;
     onCardDrop: (
       evt: DragEvent,
       filePath: string | null,
@@ -39,10 +38,9 @@
     onCardsScroll: (columnKey: string, scrollTop: number) => void;
     onBoardScroll: (scrollLeft: number, scrollTop: number) => void;
     onBoardKeyDown: (evt: KeyboardEvent) => void;
-    onBoardClick: (evt: MouseEvent) => void;
+    onBoardClick: () => void;
     onStartColumnDrag: (evt: DragEvent, columnKey: string) => void;
     onEndColumnDrag: () => void;
-    onSetColumnDropTarget: (targetKey: string | null, placement: "before" | "after" | null) => void;
     onColumnDrop: (targetKey: string, placement: "before" | "after") => void;
   }
 
@@ -68,7 +66,6 @@
     onCardSelect,
     onCardDragStart,
     onCardDragEnd,
-    onSetCardDropTarget,
     onCardDrop,
     onCardContextMenu,
     onCardLinkClick,
@@ -78,7 +75,6 @@
     onBoardClick,
     onStartColumnDrag,
     onEndColumnDrag,
-    onSetColumnDropTarget,
     onColumnDrop,
   }: Props = $props();
 
@@ -104,7 +100,7 @@
     if ((evt.target as HTMLElement).closest(".bases-kanban-card") !== null) {
       return;
     }
-    onBoardClick(evt);
+    onBoardClick();
   }
 
   // Wrapper functions that include drag state
@@ -139,7 +135,6 @@
 
   function handleSetCardDropTarget(targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null): void {
     cardDragState.setDropTarget(targetPath, targetColumnKey, placement);
-    onSetCardDropTarget(targetPath, targetColumnKey, placement);
   }
 
   const startCardIndexes = $derived.by(() => {

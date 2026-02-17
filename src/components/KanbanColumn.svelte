@@ -46,7 +46,7 @@
     onCardLinkClick: (evt: MouseEvent, target: string) => void;
     onCardsScroll: (scrollTop: number) => void;
     onBoardKeyDown: (evt: KeyboardEvent) => void;
-    onBoardClick: (evt: MouseEvent) => void;
+    onBoardClick: () => void;
   }
 
   let {

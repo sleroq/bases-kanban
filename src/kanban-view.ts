@@ -63,14 +63,9 @@ import {
 } from "./kanban-view/background-manager";
 import {
   type RenderedGroup,
-  type PartialRenderResult,
   mergeGroupsByColumnKey,
   sortGroupsByColumnOrder,
   buildRenderedGroups,
-  computeRenderSignature,
-  canSkipFullRender,
-  computeColumnSnapshots,
-  canRenderPartially,
 } from "./kanban-view/render-pipeline";
 import {
   type SelectionState,
@@ -99,14 +94,17 @@ export class KanbanView extends BasesView {
   private pendingLocalScrollRevision: number | null = null;
   private hasRenderedBoard = false;
   private lastPersistedScrollState: { left: number; top: number } | null = null;
-  private lastRenderSignature: string | null = null;
   private localCardOrderCache: CardOrderCache = { order: null, raw: "" };
   private columnOrderCache: ColumnOrderCache = { order: null, raw: "" };
-  private lastColumnPathSnapshots = new Map<string, string[]>();
-  private partialRenderCount = 0;
-  private static readonly PARTIAL_RENDER_REBUILD_THRESHOLD = 10;
   private svelteApp: ReturnType<typeof KanbanRoot> | null = null;
   private readonly selectedPathsStore: Writable<Set<string>>;
+  // Store for KanbanRoot props to enable updates without remount
+  private sveltePropsStore: Writable<{
+    groups: RenderedGroup[];
+    groupByProperty: BasesPropertyId | null;
+    selectedProperties: BasesPropertyId[];
+    columnScrollByKey: Record<string, number>;
+  }> | null = null;
 
   // Drag state (replaces drag-controller)
   private draggingCardSourcePath: string | null = null;
@@ -160,31 +158,6 @@ export class KanbanView extends BasesView {
     return false;
   }
 
-  private renderPartial(
-    renderedGroups: RenderedGroup[],
-    changedColumnKeys: string[],
-  ): void {
-    logRenderEvent("PARTIAL RENDER - replacing columns", {
-      changedCount: changedColumnKeys.length,
-      changedKeys: changedColumnKeys.join(","),
-    });
-
-    // For Svelte, we re-render the whole component but the framework handles
-    // efficient updates. In future, could optimize to only update changed props.
-    this.renderFull(renderedGroups);
-
-    this.partialRenderCount += 1;
-    if (this.partialRenderCount >= KanbanView.PARTIAL_RENDER_REBUILD_THRESHOLD) {
-      logRenderEvent("PARTIAL RENDER - rebuilding all indexes (threshold reached)");
-      this.partialRenderCount = 0;
-    }
-
-    logRenderEvent("PARTIAL RENDER COMPLETE", {
-      replacedColumns: changedColumnKeys.length,
-      indexRebuild: this.partialRenderCount === 0,
-    });
-  }
-
   private render(): void {
     logRenderEvent("render() called");
 
@@ -197,102 +170,53 @@ export class KanbanView extends BasesView {
       totalEntries: groups.reduce((sum, g) => sum + g.entries.length, 0),
     });
 
-    const displaySettings = {
-      cardTitleSource: this.plugin.settings.cardTitleSource,
-      cardTitleMaxLength: this.plugin.settings.cardTitleMaxLength,
-      propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
-      tagPropertySuffix: this.plugin.settings.tagPropertySuffix,
-      tagSaturation: this.plugin.settings.tagSaturation,
-      tagLightness: this.plugin.settings.tagLightness,
-      tagAlpha: this.plugin.settings.tagAlpha,
-    };
+    // Refresh entry indexes (needed for drag/drop and selection)
+    this.refreshEntryIndexes(groups);
+    this.updateSvelteProps();
 
-    const localCardOrderByColumn = this.getLocalCardOrderByColumn();
-
-    const selectedProperties = getSelectedProperties(this.data?.properties);
-    const groupByProperty = detectGroupByProperty(
-      rawGroups,
-      getPropertyCandidates(selectedProperties, this.allProperties),
-    );
-
-    const currentSignature = computeRenderSignature(
-      groups,
-      displaySettings,
-      localCardOrderByColumn,
-      selectedProperties,
-      groupByProperty,
-    );
-
-    if (canSkipFullRender(currentSignature, this.lastRenderSignature, this.hasRenderedBoard)) {
-      logRenderEvent("SKIPPED - full render not needed, updating cheap UI only");
-      this.updateCheapUI();
-      return;
-    }
+    // Update background styles (always apply since they may change independently)
+    this.applyBackgroundStyles();
 
     if (!hasConfiguredGroupBy(groups)) {
-      logRenderEvent("Proceeding with FULL DOM RENDER (no group by)");
-      this.unmountSvelteApp();
-      this.rootEl.empty();
-      this.applyBackgroundStyles();
-      this.refreshEntryIndexes(groups);
-      this.updateSvelteProps();
+      logRenderEvent("Rendering placeholder (no group by)");
+      if (this.svelteApp !== null) {
+        this.unmountSvelteApp();
+        this.rootEl.empty();
+      }
       this.renderPlaceholder();
+      this.hasRenderedBoard = false;
       return;
     }
 
+    const localCardOrderByColumn = this.getLocalCardOrderByColumn();
     const columnOrder = this.getColumnOrderFromConfig();
     const orderedGroups = sortGroupsByColumnOrder(groups, columnOrder);
     const renderedGroups = buildRenderedGroups(orderedGroups, localCardOrderByColumn);
 
-    const { canPartial, changedColumns }: PartialRenderResult = canRenderPartially(
-      renderedGroups,
-      this.lastColumnPathSnapshots,
-      this.hasRenderedBoard,
-    );
-
-    if (canPartial && changedColumns.length > 0) {
-      this.renderPartial(renderedGroups, changedColumns);
-      this.lastRenderSignature = computeRenderSignature(
-        groups,
-        displaySettings,
-        localCardOrderByColumn,
-        selectedProperties,
-        groupByProperty,
-      );
-      return;
-    }
-
-    logRenderEvent("Proceeding with FULL DOM RENDER", {
-      groupCount: groups.length,
-      hasConfiguredGroupBy: hasConfiguredGroupBy(groups),
-    });
-
-    this.renderFull(renderedGroups);
-    this.hasRenderedBoard = true;
-    this.lastRenderSignature = computeRenderSignature(
-      groups,
-      displaySettings,
-      localCardOrderByColumn,
-      selectedProperties,
-      groupByProperty,
-    );
-    this.lastColumnPathSnapshots = computeColumnSnapshots(renderedGroups);
-    this.partialRenderCount = 0;
-
-    logRenderEvent("FULL RENDER COMPLETE");
-  }
-
-  private renderFull(renderedGroups: RenderedGroup[]): void {
-    this.refreshEntryIndexesFromRendered(renderedGroups);
-    this.updateSvelteProps();
-
     const selectedProperties = getSelectedProperties(this.data?.properties);
-    const rawGroups: BasesEntryGroup[] = this.data?.groupedData ?? [];
     const groupByProperty = detectGroupByProperty(
       rawGroups,
       getPropertyCandidates(selectedProperties, this.allProperties),
     );
 
+    if (this.svelteApp === null) {
+      logRenderEvent("Mounting Svelte app for first render");
+      this.mountSvelteApp(renderedGroups, groupByProperty, selectedProperties);
+      this.hasRenderedBoard = true;
+    } else {
+      logRenderEvent("Updating Svelte app props (Svelte handles DOM diffing)");
+      this.updateSvelteAppProps(renderedGroups, groupByProperty, selectedProperties);
+    }
+
+    logRenderEvent("Render complete");
+  }
+
+  private mountSvelteApp(
+    renderedGroups: RenderedGroup[],
+    groupByProperty: BasesPropertyId | null,
+    selectedProperties: BasesPropertyId[],
+  ): void {
+    // Get initial scroll positions for first mount
     const initialBoardScroll = this.getInitialBoardScroll();
     const columnScrollByKey: Record<string, number> = {};
     for (const { group } of renderedGroups) {
@@ -303,23 +227,24 @@ export class KanbanView extends BasesView {
       );
     }
 
-    this.unmountSvelteApp();
+    // Create props store for reactive updates
+    this.sveltePropsStore = writable({
+      groups: renderedGroups,
+      groupByProperty,
+      selectedProperties,
+      columnScrollByKey,
+    });
 
-    this.rootEl.empty();
-
-    // Mount new Svelte app
+    // Mount Svelte app once
     this.svelteApp = mount(KanbanRoot, {
       target: this.rootEl,
       props: {
         app: this.app as App,
         rootEl: this.rootEl,
-        groups: renderedGroups,
-        groupByProperty,
-        selectedProperties,
+        // Static props that don't change
         selectedPathsStore: this.selectedPathsStore,
         initialBoardScrollLeft: initialBoardScroll.left,
         initialBoardScrollTop: initialBoardScroll.top,
-        columnScrollByKey,
         cardTitleSource: this.plugin.settings.cardTitleSource,
         cardTitleMaxLength: this.plugin.settings.cardTitleMaxLength,
         propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
@@ -339,13 +264,13 @@ export class KanbanView extends BasesView {
           this.plugin.settings.columnTransparency,
         columnBlur: (this.config?.get(COLUMN_BLUR_OPTION_KEY) as number | undefined) ??
           this.plugin.settings.columnBlur,
+        // Store for reactive data props
+        dataStore: this.sveltePropsStore,
+        // Callbacks
         onCreateCard: (grpByProperty: BasesPropertyId | null, grpKey: unknown) => this.createCardForColumn(grpByProperty, grpKey),
         onCardSelect: (filePath: string, extendSelection: boolean) => this.selectCard(filePath, extendSelection),
         onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => this.startCardDrag(evt, filePath, cardIndex),
         onCardDragEnd: () => this.endCardDrag(),
-        onSetCardDropTarget: (_targetPath: string | null, _targetColumnKey: string | null, _placement: "before" | "after" | null) => {
-          // Drop target state is now managed in Svelte components
-        },
         onCardDrop: (
           evt: DragEvent,
           filePath: string | null,
@@ -360,16 +285,37 @@ export class KanbanView extends BasesView {
         onBoardClick: () => this.clearSelection(),
         onStartColumnDrag: (evt: DragEvent, columnKey: string) => this.startColumnDrag(evt, columnKey),
         onEndColumnDrag: () => this.endColumnDrag(),
-        onSetColumnDropTarget: (_targetKey: string | null, _placement: "before" | "after" | null) => {
-          // Drop target state is now managed in Svelte components
-        },
         onColumnDrop: (targetKey: string, placement: "before" | "after") => this.handleColumnDrop(targetKey, placement),
       },
     });
   }
 
-  private updateCheapUI(): void {
-    this.applyBackgroundStyles();
+  private updateSvelteAppProps(
+    renderedGroups: RenderedGroup[],
+    groupByProperty: BasesPropertyId | null,
+    selectedProperties: BasesPropertyId[],
+  ): void {
+    if (this.sveltePropsStore === null) {
+      return;
+    }
+
+    // Update column scroll positions for any new columns
+    const columnScrollByKey: Record<string, number> = {};
+    for (const { group } of renderedGroups) {
+      const columnKey = getColumnKey(group.key);
+      columnScrollByKey[columnKey] = loadColumnScrollPosition(
+        this.viewSessionId,
+        columnKey,
+      );
+    }
+
+    // Update the store - Svelte handles efficient DOM updates via keyed each blocks
+    this.sveltePropsStore.set({
+      groups: renderedGroups,
+      groupByProperty,
+      selectedProperties,
+      columnScrollByKey,
+    });
   }
 
   private renderPlaceholder(): void {
@@ -686,18 +632,6 @@ export class KanbanView extends BasesView {
     );
   }
 
-  private refreshEntryIndexesFromRendered(
-    renderedGroups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>,
-  ): void {
-    const indexes = buildEntryIndexes(renderedGroups);
-    this.entryByPath = indexes.entryByPath;
-    this.cardOrder = indexes.cardOrder;
-    this.selectionState = syncSelectionWithEntries(
-      this.selectionState,
-      new Set(this.entryByPath.keys()),
-    );
-  }
-
   private getCardIndex(filePath: string): number {
     const index = this.cardOrder.indexOf(filePath);
     return index === -1 ? 0 : index;
@@ -998,6 +932,7 @@ export class KanbanView extends BasesView {
     }
     unmount(this.svelteApp);
     this.svelteApp = null;
+    this.sveltePropsStore = null;
   }
 
   onClose(): void {

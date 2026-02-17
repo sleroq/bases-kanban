@@ -1,19 +1,22 @@
 <script lang="ts">
   import type { BasesEntry, BasesPropertyId, BasesEntryGroup, App } from "obsidian";
-  import type { Readable } from "svelte/store";
+  import type { Readable, Writable } from "svelte/store";
   import KanbanBoard from "./KanbanBoard.svelte";
   import KanbanBackground from "./KanbanBackground.svelte";
+
+  interface DataStoreValue {
+    groups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>;
+    groupByProperty: BasesPropertyId | null;
+    selectedProperties: BasesPropertyId[];
+    columnScrollByKey: Record<string, number>;
+  }
 
   interface Props {
     app: App;
     rootEl: HTMLElement;
-    groups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>;
-    groupByProperty: BasesPropertyId | null;
-    selectedProperties: BasesPropertyId[];
     selectedPathsStore: Readable<Set<string>>;
     initialBoardScrollLeft: number;
     initialBoardScrollTop: number;
-    columnScrollByKey: Record<string, number>;
     cardTitleSource: "basename" | "filename" | "path";
     cardTitleMaxLength: number;
     propertyValueSeparator: string;
@@ -29,11 +32,11 @@
     backgroundBlur: number;
     columnTransparency: number;
     columnBlur: number;
+    dataStore: Writable<DataStoreValue>;
     onCreateCard: (groupByProperty: BasesPropertyId | null, groupKey: unknown) => void;
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onCardDragEnd: () => void;
-    onSetCardDropTarget: (targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null) => void;
     onCardDrop: (
       evt: DragEvent,
       filePath: string | null,
@@ -45,23 +48,18 @@
     onCardsScroll: (columnKey: string, scrollTop: number) => void;
     onBoardScroll: (scrollLeft: number, scrollTop: number) => void;
     onBoardKeyDown: (evt: KeyboardEvent) => void;
-    onBoardClick: (evt: MouseEvent) => void;
+    onBoardClick: () => void;
     onStartColumnDrag: (evt: DragEvent, columnKey: string) => void;
     onEndColumnDrag: () => void;
-    onSetColumnDropTarget: (targetKey: string | null, placement: "before" | "after" | null) => void;
     onColumnDrop: (targetKey: string, placement: "before" | "after") => void;
   }
 
   let {
     app,
     rootEl,
-    groups,
-    groupByProperty,
-    selectedProperties,
     selectedPathsStore,
     initialBoardScrollLeft,
     initialBoardScrollTop,
-    columnScrollByKey,
     cardTitleSource,
     cardTitleMaxLength,
     propertyValueSeparator,
@@ -77,11 +75,11 @@
     backgroundBlur,
     columnTransparency,
     columnBlur,
+    dataStore,
     onCreateCard,
     onCardSelect,
     onCardDragStart,
     onCardDragEnd,
-    onSetCardDropTarget,
     onCardDrop,
     onCardContextMenu,
     onCardLinkClick,
@@ -91,7 +89,6 @@
     onBoardClick,
     onStartColumnDrag,
     onEndColumnDrag,
-    onSetColumnDropTarget,
     onColumnDrop,
   }: Props = $props();
 
@@ -102,6 +99,12 @@
     columnTransparency,
     columnBlur,
   });
+
+  // Derive reactive data props from store
+  const groups = $derived($dataStore.groups);
+  const groupByProperty = $derived($dataStore.groupByProperty);
+  const selectedProperties = $derived($dataStore.selectedProperties);
+  const columnScrollByKey = $derived($dataStore.columnScrollByKey);
 </script>
 
 <KanbanBackground
@@ -132,7 +135,6 @@
   {onCardSelect}
   {onCardDragStart}
   {onCardDragEnd}
-  {onSetCardDropTarget}
   {onCardDrop}
   {onCardContextMenu}
   {onCardLinkClick}
@@ -142,6 +144,5 @@
   {onBoardClick}
   {onStartColumnDrag}
   {onEndColumnDrag}
-  {onSetColumnDropTarget}
   {onColumnDrop}
 />
