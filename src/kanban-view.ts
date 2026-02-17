@@ -39,7 +39,11 @@ import {
   getWritablePropertyKey,
   hasConfiguredGroupBy,
 } from "./kanban-view/utils";
-import { buildEntryIndexes } from "./kanban-view/indexing";
+import {
+  buildEntryIndexes,
+  clearCardIndexesForColumns,
+  addCardIndexesFromColumn,
+} from "./kanban-view/indexing";
 import { KanbanDragController } from "./kanban-view/drag-controller";
 import { KanbanMutationService } from "./kanban-view/mutations";
 import {
@@ -110,6 +114,8 @@ export class KanbanView extends BasesView {
   private localCardOrderCache: CardOrderCache = { order: null, raw: "" };
   private columnOrderCache: ColumnOrderCache = { order: null, raw: "" };
   private lastColumnPathSnapshots = new Map<string, string[]>();
+  private partialRenderCount = 0;
+  private static readonly PARTIAL_RENDER_REBUILD_THRESHOLD = 10;
 
   constructor(
     controller: QueryController,
@@ -258,6 +264,13 @@ export class KanbanView extends BasesView {
       }
     }
 
+    // Clear card indexes for columns that will be replaced to prevent stale refs
+    clearCardIndexesForColumns(
+      this.cardElByPath,
+      changedColumnKeys,
+      this.columnElByKey,
+    );
+
     // Replace only changed columns
     for (const columnKey of changedColumnKeys) {
       const existingColumn = this.columnElByKey.get(columnKey);
@@ -287,19 +300,9 @@ export class KanbanView extends BasesView {
       // Replace in DOM
       existingColumn.replaceWith(newColumnEl);
 
-      // Update element index
+      // Update element indexes for this column
       this.columnElByKey.set(columnKey, newColumnEl);
-
-      // Update card indexes
-      const cards =
-        newColumnEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
-      for (let i = 0; i < cards.length; i++) {
-        const cardEl = cards[i];
-        const path = cardEl.dataset.cardPath;
-        if (typeof path === "string" && path.length > 0) {
-          this.cardElByPath.set(path, cardEl);
-        }
-      }
+      addCardIndexesFromColumn(this.cardElByPath, newColumnEl);
 
       // Restore scroll position for this column if we tracked it
       this.restoreColumnScrollPosition(columnKey, newColumnEl);
@@ -309,8 +312,17 @@ export class KanbanView extends BasesView {
     this.refreshEntryIndexesFromRendered(renderedGroups);
     this.lastColumnPathSnapshots = computeColumnSnapshots(renderedGroups);
 
+    // Track partial renders and do full index rebuild periodically to prevent drift
+    this.partialRenderCount += 1;
+    if (this.partialRenderCount >= KanbanView.PARTIAL_RENDER_REBUILD_THRESHOLD) {
+      logRenderEvent("PARTIAL RENDER - rebuilding all indexes (threshold reached)");
+      this.refreshElementIndexes();
+      this.partialRenderCount = 0;
+    }
+
     logRenderEvent("PARTIAL RENDER COMPLETE", {
       replacedColumns: changedColumnKeys.length,
+      indexRebuild: this.partialRenderCount === 0,
     });
   }
 
@@ -532,6 +544,7 @@ export class KanbanView extends BasesView {
     this.lastColumnPathSnapshots = computeColumnSnapshots(renderedGroups);
     const scrollRestored = !this.hasRenderedBoard;
     this.hasRenderedBoard = true;
+    this.partialRenderCount = 0; // Reset counter on full render
 
     logRenderEvent("FULL RENDER COMPLETE", {
       scrollRestored,
