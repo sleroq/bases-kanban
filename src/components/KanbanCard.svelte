@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getContext } from "svelte";
   import type { BasesEntry, BasesPropertyId } from "obsidian";
   import {
     getPropertyValues,
@@ -6,6 +7,8 @@
     getHashColor,
   } from "../kanban-view/utils";
   import type { createCardDragState } from "../kanban-view/drag-state";
+  import { KANBAN_CONTEXT_KEY } from "../kanban-view/context";
+  import type { KanbanContext } from "../kanban-view/context";
 
   interface Props {
     entry: BasesEntry;
@@ -15,13 +18,6 @@
     groupByProperty: BasesPropertyId | null;
     selectedProperties: BasesPropertyId[];
     selected: boolean;
-    cardTitleSource: "basename" | "filename" | "path";
-    cardTitleMaxLength: number;
-    propertyValueSeparator: string;
-    tagPropertySuffix: string;
-    tagSaturation: number;
-    tagLightness: number;
-    tagAlpha: number;
     cardDragState: ReturnType<typeof createCardDragState>;
     onSelect: (filePath: string, extendSelection: boolean) => void;
     onDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
@@ -45,13 +41,6 @@
     groupByProperty,
     selectedProperties,
     selected,
-    cardTitleSource,
-    cardTitleMaxLength,
-    propertyValueSeparator,
-    tagPropertySuffix,
-    tagSaturation,
-    tagLightness,
-    tagAlpha,
     cardDragState,
     onSelect,
     onDragStart,
@@ -62,13 +51,16 @@
     onLinkClick,
   }: Props = $props();
 
+  // Get settings from context
+  const { settings } = getContext<KanbanContext>(KANBAN_CONTEXT_KEY);
+
   let cardEl: HTMLElement | null = $state(null);
   let isDraggable: boolean = $state(false);
   let rafId: number | null = $state(null);
 
   const filePath = $derived(entry.file.path);
-  const fullTitle = $derived(getCardTitle(entry, cardTitleSource));
-  const title = $derived(truncateTitle(fullTitle, cardTitleMaxLength));
+  const fullTitle = $derived(getCardTitle(entry, settings.cardTitleSource));
+  const title = $derived(truncateTitle(fullTitle, settings.cardTitleMaxLength));
 
   const propertiesToDisplay = $derived(
     selectedProperties.filter(
@@ -258,7 +250,7 @@
           <div class="bases-kanban-property-row">
             {#each values as value, i (i)}
               {@const links = parseWikiLinks(value)}
-              {@const isTagProperty = propertyId.endsWith(tagPropertySuffix)}
+              {@const isTagProperty = propertyId.endsWith(settings.tagPropertySuffix)}
               {#if links.length === 0}
                 {@const cls = isTagProperty
                   ? "bases-kanban-property-value bases-kanban-property-tag"
@@ -266,7 +258,7 @@
                 <span
                   class={cls}
                   style:background-color={isTagProperty
-                    ? getHashColor(value, tagSaturation, tagLightness, tagAlpha)
+                    ? getHashColor(value, settings.tagSaturation, settings.tagLightness, settings.tagAlpha)
                     : undefined}
                 >
                   {value}
@@ -281,7 +273,7 @@
                     href="#"
                     class={cls}
                     style:background-color={isTagProperty
-                      ? getHashColor(link.display, tagSaturation, tagLightness, tagAlpha)
+                      ? getHashColor(link.display, settings.tagSaturation, settings.tagLightness, settings.tagAlpha)
                       : undefined}
                     onclick={(evt: MouseEvent) => handlePropertyLinkClick(evt, link.target)}
                   >
@@ -289,14 +281,14 @@
                   </a>
                   {#if !isTagProperty && linkIndex < links.length - 1}
                     <span class="bases-kanban-property-separator"
-                      >{propertyValueSeparator}</span
+                      >{settings.propertyValueSeparator}</span
                     >
                   {/if}
                 {/each}
               {/if}
               {#if !isTagProperty && i < values.length - 1}
                 <span class="bases-kanban-property-separator"
-                  >{propertyValueSeparator}</span
+                  >{settings.propertyValueSeparator}</span
                 >
               {/if}
             {/each}

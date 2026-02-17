@@ -91,13 +91,11 @@ export class KanbanView extends BasesView {
   private columnOrderCache: ColumnOrderCache = { order: null, raw: "" };
   private svelteApp: ReturnType<typeof KanbanRoot> | null = null;
   private readonly selectedPathsStore: Writable<Set<string>>;
-  // Store for KanbanRoot props to enable updates without remount
-  private sveltePropsStore: Writable<{
-    groups: RenderedGroup[];
-    groupByProperty: BasesPropertyId | null;
-    selectedProperties: BasesPropertyId[];
-    columnScrollByKey: Record<string, number>;
-  }> | null = null;
+  // Use stores for all reactive data that needs external updates
+  private readonly groupsStore: Writable<RenderedGroup[]> = writable([]);
+  private readonly groupByPropertyStore: Writable<BasesPropertyId | null> = writable(null);
+  private readonly selectedPropertiesStore: Writable<BasesPropertyId[]> = writable([]);
+  private readonly columnScrollByKeyStore: Writable<Record<string, number>> = writable({});
   // Cache of current rendered groups for data-driven operations
   // Avoids DOM queries for card order operations
   private currentRenderedGroups: RenderedGroup[] = [];
@@ -156,10 +154,13 @@ export class KanbanView extends BasesView {
     const rawGroups: BasesEntryGroup[] = this.data?.groupedData ?? [];
     const groups = mergeGroupsByColumnKey(rawGroups);
 
+    const localCardOrderByColumn = this.getLocalCardOrderByColumn();
     logRenderEvent("Data prepared", {
       rawGroupCount: rawGroups.length,
       mergedGroupCount: groups.length,
       totalEntries: groups.reduce((sum, g) => sum + g.entries.length, 0),
+      localOrderColumnCount: localCardOrderByColumn.size,
+      localOrderKeys: Array.from(localCardOrderByColumn.keys()),
     });
 
     // Update background styles (always apply since they may change independently)
@@ -176,10 +177,20 @@ export class KanbanView extends BasesView {
       return;
     }
 
-    const localCardOrderByColumn = this.getLocalCardOrderByColumn();
     const columnOrder = this.getColumnOrderFromConfig();
     const orderedGroups = sortGroupsByColumnOrder(groups, columnOrder);
     const renderedGroups = buildRenderedGroups(orderedGroups, localCardOrderByColumn);
+
+    // Debug: Log first column's entry order
+    if (renderedGroups.length > 0) {
+      const firstColumn = renderedGroups[0];
+      const columnKey = getColumnKey(firstColumn.group.key);
+      logRenderEvent("First column entries", {
+        columnKey,
+        entryCount: firstColumn.entries.length,
+        firstPaths: firstColumn.entries.slice(0, 3).map(e => e.file.path),
+      });
+    }
 
     // Cache rendered groups for data-driven operations (avoids DOM queries)
     this.currentRenderedGroups = renderedGroups;
@@ -223,13 +234,11 @@ export class KanbanView extends BasesView {
       );
     }
 
-    // Create props store for reactive updates
-    this.sveltePropsStore = writable({
-      groups: renderedGroups,
-      groupByProperty,
-      selectedProperties,
-      columnScrollByKey,
-    });
+    // Set initial store values
+    this.groupsStore.set(renderedGroups);
+    this.groupByPropertyStore.set(groupByProperty);
+    this.selectedPropertiesStore.set(selectedProperties);
+    this.columnScrollByKeyStore.set(columnScrollByKey);
 
     // Mount Svelte app once
     this.svelteApp = mount(KanbanRoot, {
@@ -241,16 +250,7 @@ export class KanbanView extends BasesView {
         selectedPathsStore: this.selectedPathsStore,
         initialBoardScrollLeft: initialBoardScroll.left,
         initialBoardScrollTop: initialBoardScroll.top,
-        cardTitleSource: this.plugin.settings.cardTitleSource,
-        cardTitleMaxLength: this.plugin.settings.cardTitleMaxLength,
-        propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
-        tagPropertySuffix: this.plugin.settings.tagPropertySuffix,
-        tagSaturation: this.plugin.settings.tagSaturation,
-        tagLightness: this.plugin.settings.tagLightness,
-        tagAlpha: this.plugin.settings.tagAlpha,
-        columnHeaderWidth: this.plugin.settings.columnHeaderWidth,
-        emptyColumnLabel: this.plugin.settings.emptyColumnLabel,
-        addCardButtonText: this.plugin.settings.addCardButtonText,
+        settings: this.plugin.settings,
         backgroundImage: this.config?.get(BACKGROUND_IMAGE_OPTION_KEY),
         backgroundBrightness: (this.config?.get(BACKGROUND_BRIGHTNESS_OPTION_KEY) as number | undefined) ??
           this.plugin.settings.backgroundBrightness,
@@ -260,8 +260,11 @@ export class KanbanView extends BasesView {
           this.plugin.settings.columnTransparency,
         columnBlur: (this.config?.get(COLUMN_BLUR_OPTION_KEY) as number | undefined) ??
           this.plugin.settings.columnBlur,
-        // Store for reactive data props
-        dataStore: this.sveltePropsStore,
+        // Reactive stores
+        groupsStore: this.groupsStore,
+        groupByPropertyStore: this.groupByPropertyStore,
+        selectedPropertiesStore: this.selectedPropertiesStore,
+        columnScrollByKeyStore: this.columnScrollByKeyStore,
         // Callbacks
         onCreateCard: (grpByProperty: BasesPropertyId | null, grpKey: unknown) => this.createCardForColumn(grpByProperty, grpKey),
         onCardSelect: (filePath: string, extendSelection: boolean) => this.selectCard(filePath, extendSelection),
@@ -291,10 +294,6 @@ export class KanbanView extends BasesView {
     groupByProperty: BasesPropertyId | null,
     selectedProperties: BasesPropertyId[],
   ): void {
-    if (this.sveltePropsStore === null) {
-      return;
-    }
-
     // Update column scroll positions for any new columns
     const columnScrollByKey: Record<string, number> = {};
     for (const { group } of renderedGroups) {
@@ -305,12 +304,13 @@ export class KanbanView extends BasesView {
       );
     }
 
-    // Update the store - Svelte handles efficient DOM updates via keyed each blocks
-    this.sveltePropsStore.set({
-      groups: renderedGroups,
-      groupByProperty,
-      selectedProperties,
-      columnScrollByKey,
+    // Update stores to trigger Svelte reactivity
+    this.groupsStore.set(renderedGroups);
+    this.groupByPropertyStore.set(groupByProperty);
+    this.selectedPropertiesStore.set(selectedProperties);
+    this.columnScrollByKeyStore.set(columnScrollByKey);
+    logRenderEvent("Stores updated", {
+      groupCount: renderedGroups.length,
     });
   }
 
@@ -861,11 +861,11 @@ export class KanbanView extends BasesView {
     // Reset drag state
     this.draggingCardSourcePath = null;
 
-    if (sourceColumnKey === targetColumnKey) {
-      logDragEvent("Same column drop - skipping render (rely on reactivity)");
-    } else {
-      logDragEvent("Cross-column drop - expecting re-render from data update");
-    }
+    // Always render after drop to show updated card order
+    // Same-column reordering updates local card order config,
+    // so we need to rebuild rendered groups with the new order applied
+    logDragEvent("Triggering render after drop");
+    this.render();
   }
 
   private debouncedSaveBoardScrollPosition(
@@ -915,7 +915,6 @@ export class KanbanView extends BasesView {
     }
     unmount(this.svelteApp);
     this.svelteApp = null;
-    this.sveltePropsStore = null;
   }
 
   onClose(): void {

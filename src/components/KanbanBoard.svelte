@@ -9,20 +9,9 @@
     groups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>;
     groupByProperty: BasesPropertyId | null;
     selectedProperties: BasesPropertyId[];
-    selectedPathsStore: Readable<Set<string>>;
     initialBoardScrollLeft: number;
     initialBoardScrollTop: number;
     columnScrollByKey: Record<string, number>;
-    cardTitleSource: "basename" | "filename" | "path";
-    cardTitleMaxLength: number;
-    propertyValueSeparator: string;
-    tagPropertySuffix: string;
-    tagSaturation: number;
-    tagLightness: number;
-    tagAlpha: number;
-    columnHeaderWidth: number;
-    emptyColumnLabel: string;
-    addCardButtonText: string;
     onCreateCard: (groupByProperty: BasesPropertyId | null, groupKey: unknown) => void;
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
@@ -48,20 +37,9 @@
     groups,
     groupByProperty,
     selectedProperties,
-    selectedPathsStore,
     initialBoardScrollLeft,
     initialBoardScrollTop,
     columnScrollByKey,
-    cardTitleSource,
-    cardTitleMaxLength,
-    propertyValueSeparator,
-    tagPropertySuffix,
-    tagSaturation,
-    tagLightness,
-    tagAlpha,
-    columnHeaderWidth,
-    emptyColumnLabel,
-    addCardButtonText,
     onCreateCard,
     onCardSelect,
     onCardDragStart,
@@ -181,17 +159,6 @@
       initialScrollTop={columnScrollByKey[columnKey] ?? 0}
       {groupByProperty}
       {selectedProperties}
-      {selectedPathsStore}
-      {cardTitleSource}
-      {cardTitleMaxLength}
-      {propertyValueSeparator}
-      {tagPropertySuffix}
-      {tagSaturation}
-      {tagLightness}
-      {tagAlpha}
-      {columnHeaderWidth}
-      {emptyColumnLabel}
-      {addCardButtonText}
       {columnDragState}
       {cardDragState}
       onStartColumnDrag={handleStartColumnDrag}

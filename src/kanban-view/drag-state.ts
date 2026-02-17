@@ -65,11 +65,11 @@ export function createCardDragState(): {
         dataTransfer.setData("text/plain", filePath);
       }
 
-      logDragEvent("Card drag started (Svelte store)", { filePath });
+      logDragEvent("Card drag started", { filePath });
     },
 
     endDrag(): void {
-      logDragEvent("Card drag ended (Svelte store)", {
+      logDragEvent("Card drag ended", {
         sourcePath: get(sourcePath),
         targetPath: get(targetPath),
         placement: get(placement),
@@ -163,11 +163,11 @@ export function createColumnDragState(): {
         dataTransfer.setData("text/plain", columnKey);
       }
 
-      logDragEvent("Column drag started (Svelte store)", { columnKey });
+      logDragEvent("Column drag started", { columnKey });
     },
 
     endDrag(): void {
-      logDragEvent("Column drag ended (Svelte store)", {
+      logDragEvent("Column drag ended", {
         sourceKey: get(sourceKey),
         targetKey: get(targetKey),
         placement: get(placement),
@@ -209,20 +209,4 @@ export function createColumnDragState(): {
   };
 }
 
-// Calculate drop placement for a card based on mouse position
-export function calculateCardDropPlacement(
-  evt: DragEvent,
-  cardRect: DOMRect,
-): "before" | "after" {
-  const midY = cardRect.top + cardRect.height / 2;
-  return evt.clientY < midY ? "before" : "after";
-}
 
-// Calculate drop placement for a column based on mouse position
-export function calculateColumnDropPlacement(
-  evt: DragEvent,
-  columnRect: DOMRect,
-): "before" | "after" {
-  const midX = columnRect.left + columnRect.width / 2;
-  return evt.clientX < midX ? "before" : "after";
-}

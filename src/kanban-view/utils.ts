@@ -95,15 +95,6 @@ export function detectGroupByProperty(
   return null;
 }
 
-export function formatPropertyValue(value: unknown): string | null {
-  if (value === null || value === undefined || value instanceof NullValue) {
-    return null;
-  }
-
-  const stringValue = String(value).trim();
-  return stringValue.length > 0 ? stringValue : null;
-}
-
 export interface ParsedWikiLink {
   target: string;
   display: string;

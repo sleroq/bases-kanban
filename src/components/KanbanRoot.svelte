@@ -1,15 +1,12 @@
 <script lang="ts">
+  import { setContext, untrack } from "svelte";
   import type { BasesEntry, BasesPropertyId, BasesEntryGroup, App } from "obsidian";
-  import type { Readable, Writable } from "svelte/store";
+  import type { Readable } from "svelte/store";
   import KanbanBoard from "./KanbanBoard.svelte";
   import KanbanBackground from "./KanbanBackground.svelte";
-
-  interface DataStoreValue {
-    groups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>;
-    groupByProperty: BasesPropertyId | null;
-    selectedProperties: BasesPropertyId[];
-    columnScrollByKey: Record<string, number>;
-  }
+  import { KANBAN_CONTEXT_KEY } from "../kanban-view/context";
+  import type { KanbanContext } from "../kanban-view/context";
+  import type { BasesKanbanSettings } from "../settings";
 
   interface Props {
     app: App;
@@ -17,22 +14,17 @@
     selectedPathsStore: Readable<Set<string>>;
     initialBoardScrollLeft: number;
     initialBoardScrollTop: number;
-    cardTitleSource: "basename" | "filename" | "path";
-    cardTitleMaxLength: number;
-    propertyValueSeparator: string;
-    tagPropertySuffix: string;
-    tagSaturation: number;
-    tagLightness: number;
-    tagAlpha: number;
-    columnHeaderWidth: number;
-    emptyColumnLabel: string;
-    addCardButtonText: string;
+    settings: BasesKanbanSettings;
     backgroundImage: unknown;
     backgroundBrightness: number;
     backgroundBlur: number;
     columnTransparency: number;
     columnBlur: number;
-    dataStore: Writable<DataStoreValue>;
+    // Store-based reactive data
+    groupsStore: Readable<Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>>;
+    groupByPropertyStore: Readable<BasesPropertyId | null>;
+    selectedPropertiesStore: Readable<BasesPropertyId[]>;
+    columnScrollByKeyStore: Readable<Record<string, number>>;
     onCreateCard: (groupByProperty: BasesPropertyId | null, groupKey: unknown) => void;
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
@@ -60,22 +52,16 @@
     selectedPathsStore,
     initialBoardScrollLeft,
     initialBoardScrollTop,
-    cardTitleSource,
-    cardTitleMaxLength,
-    propertyValueSeparator,
-    tagPropertySuffix,
-    tagSaturation,
-    tagLightness,
-    tagAlpha,
-    columnHeaderWidth,
-    emptyColumnLabel,
-    addCardButtonText,
+    settings,
     backgroundImage,
     backgroundBrightness,
     backgroundBlur,
     columnTransparency,
     columnBlur,
-    dataStore,
+    groupsStore,
+    groupByPropertyStore,
+    selectedPropertiesStore,
+    columnScrollByKeyStore,
     onCreateCard,
     onCardSelect,
     onCardDragStart,
@@ -92,6 +78,14 @@
     onColumnDrop,
   }: Props = $props();
 
+  // Provide context to entire component tree
+  const contextValue: KanbanContext = {
+    app,
+    settings,
+    selectedPathsStore,
+  } as KanbanContext;
+  setContext(KANBAN_CONTEXT_KEY, contextValue);
+
   const backgroundConfig = $derived({
     imageInput: backgroundImage,
     brightness: backgroundBrightness,
@@ -100,13 +94,25 @@
     columnBlur,
   });
 
-  // Derive reactive data props from store
-  const groups = $derived($dataStore.groups);
-  const groupByProperty = $derived($dataStore.groupByProperty);
-  const selectedProperties = $derived($dataStore.selectedProperties);
-  const columnScrollByKey = $derived($dataStore.columnScrollByKey);
+  // Derive values from stores - accessing stores with $ prefix makes them reactive
+  const groups = $derived($groupsStore);
+  const groupByProperty = $derived($groupByPropertyStore);
+  const selectedProperties = $derived($selectedPropertiesStore);
+  const columnScrollByKey = $derived($columnScrollByKeyStore);
+
+  // Debug: Track when groups change
+  $effect(() => {
+    const currentGroups = $groupsStore;
+    const totalEntries = currentGroups.reduce((sum: number, g: { entries: BasesEntry[] }) => sum + g.entries.length, 0);
+    console.log("[KANBAN SVELTE] Groups updated:", {
+      groupCount: currentGroups.length,
+      totalEntries,
+      firstColumnEntries: currentGroups[0]?.entries.slice(0, 3).map((e: BasesEntry) => e.file.path) ?? [],
+    });
+  });
 </script>
 
+{console.log('[KANBAN ROOT] Rendering with groups:', $groupsStore.length, 'first:', $groupsStore[0]?.entries?.[0]?.file?.path)}
 <KanbanBackground
   {app}
   {rootEl}
@@ -117,20 +123,9 @@
   {groups}
   {groupByProperty}
   {selectedProperties}
-  {selectedPathsStore}
   {initialBoardScrollLeft}
   {initialBoardScrollTop}
   {columnScrollByKey}
-  {cardTitleSource}
-  {cardTitleMaxLength}
-  {propertyValueSeparator}
-  {tagPropertySuffix}
-  {tagSaturation}
-  {tagLightness}
-  {tagAlpha}
-  {columnHeaderWidth}
-  {emptyColumnLabel}
-  {addCardButtonText}
   {onCreateCard}
   {onCardSelect}
   {onCardDragStart}

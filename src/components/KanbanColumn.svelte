@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { getContext } from "svelte";
   import type { BasesEntry, BasesPropertyId } from "obsidian";
   import { onDestroy, onMount } from "svelte";
-  import type { Readable } from "svelte/store";
   import KanbanCard from "./KanbanCard.svelte";
   import { getColumnName } from "../kanban-view/utils";
   import type { createCardDragState, createColumnDragState } from "../kanban-view/drag-state";
+  import { KANBAN_CONTEXT_KEY } from "../kanban-view/context";
+  import type { KanbanContext } from "../kanban-view/context";
 
   interface Props {
     columnKey: string;
@@ -14,17 +16,6 @@
     initialScrollTop: number;
     groupByProperty: BasesPropertyId | null;
     selectedProperties: BasesPropertyId[];
-    selectedPathsStore: Readable<Set<string>>;
-    cardTitleSource: "basename" | "filename" | "path";
-    cardTitleMaxLength: number;
-    propertyValueSeparator: string;
-    tagPropertySuffix: string;
-    tagSaturation: number;
-    tagLightness: number;
-    tagAlpha: number;
-    columnHeaderWidth: number;
-    emptyColumnLabel: string;
-    addCardButtonText: string;
     columnDragState: ReturnType<typeof createColumnDragState>;
     cardDragState: ReturnType<typeof createCardDragState>;
     onStartColumnDrag: (evt: DragEvent, columnKey: string) => void;
@@ -55,17 +46,6 @@
     initialScrollTop,
     groupByProperty,
     selectedProperties,
-    selectedPathsStore,
-    cardTitleSource,
-    cardTitleMaxLength,
-    propertyValueSeparator,
-    tagPropertySuffix,
-    tagSaturation,
-    tagLightness,
-    tagAlpha,
-    columnHeaderWidth,
-    emptyColumnLabel,
-    addCardButtonText,
     columnDragState,
     cardDragState,
     onStartColumnDrag,
@@ -83,16 +63,27 @@
     onCardsScroll,
   }: Props = $props();
 
+  // Get settings from context
+  const { settings, selectedPathsStore } = getContext<KanbanContext>(KANBAN_CONTEXT_KEY);
+
   let columnEl: HTMLElement | null = $state(null);
   let cardsEl: HTMLElement | null = $state(null);
   let scrollTimeout: ReturnType<typeof setTimeout> | null = $state(null);
   let columnRafId: number | null = $state(null);
 
-  const columnName = $derived(getColumnName(groupKey, emptyColumnLabel));
+  const columnName = $derived(getColumnName(groupKey, settings.emptyColumnLabel));
 
   // Extract stores to local variables so we can use $ prefix
   const columnIsDragging = $derived(columnDragState.isDragging);
   const cardIsDragging = $derived(cardDragState.isDragging);
+
+  // Debug: Track when entries change
+  $effect(() => {
+    console.log(`[KANBAN COLUMN ${columnKey}] Entries updated:`, {
+      count: entries.length,
+      firstPaths: entries.slice(0, 3).map(e => e.file.path),
+    });
+  });
 
   onMount(() => {
     if (cardsEl !== null && initialScrollTop > 0) {
@@ -113,7 +104,7 @@
   class:bases-kanban-column-drop-before={columnDragState.isDropTarget(columnKey) && columnDragState.getDropPlacement(columnKey) === "before"}
   class:bases-kanban-column-drop-after={columnDragState.isDropTarget(columnKey) && columnDragState.getDropPlacement(columnKey) === "after"}
   data-column-key={columnKey}
-  style:--bases-kanban-column-header-width="{columnHeaderWidth}px"
+  style:--bases-kanban-column-header-width="{settings.columnHeaderWidth}px"
   ondragover={(evt) => {
     if (!$columnIsDragging) return;
     evt.preventDefault();
@@ -177,7 +168,7 @@
       tabindex="0"
       aria-label="Drag to reorder column"
     >
-      <h3 style:width="{columnHeaderWidth}px">{columnName}</h3>
+      <h3 style:width="{settings.columnHeaderWidth}px">{columnName}</h3>
     </div>
     <span class="bases-kanban-column-count">{entries.length}</span>
     <button
@@ -192,7 +183,7 @@
         onCreateCard();
       }}
     >
-      {addCardButtonText}
+      {settings.addCardButtonText}
     </button>
   </div>
 
@@ -243,13 +234,6 @@
         {groupByProperty}
         {selectedProperties}
         selected={$selectedPathsStore.has(filePath)}
-        {cardTitleSource}
-        {cardTitleMaxLength}
-        {propertyValueSeparator}
-        {tagPropertySuffix}
-        {tagSaturation}
-        {tagLightness}
-        {tagAlpha}
         {cardDragState}
         onSelect={onCardSelect}
         onDragStart={onCardDragStart}
