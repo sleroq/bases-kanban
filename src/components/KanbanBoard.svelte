@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { BasesEntry, BasesPropertyId, BasesEntryGroup } from "obsidian";
+  import { onMount } from "svelte";
+  import type { Readable } from "svelte/store";
   import KanbanColumn from "./KanbanColumn.svelte";
   import { createColumnDragState, createCardDragState } from "../kanban-view/drag-state";
 
@@ -7,7 +9,10 @@
     groups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>;
     groupByProperty: BasesPropertyId | null;
     selectedProperties: BasesPropertyId[];
-    selectedPaths: Set<string>;
+    selectedPathsStore: Readable<Set<string>>;
+    initialBoardScrollLeft: number;
+    initialBoardScrollTop: number;
+    columnScrollByKey: Record<string, number>;
     cardTitleSource: "basename" | "filename" | "path";
     cardTitleMaxLength: number;
     propertyValueSeparator: string;
@@ -23,7 +28,12 @@
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onCardDragEnd: () => void;
     onSetCardDropTarget: (targetPath: string | null, placement: "before" | "after" | null) => void;
-    onCardDrop: (evt: DragEvent, filePath: string | null, groupKey: unknown) => void;
+    onCardDrop: (
+      evt: DragEvent,
+      filePath: string | null,
+      groupKey: unknown,
+      placement: "before" | "after",
+    ) => void;
     onCardContextMenu: (evt: MouseEvent, entry: BasesEntry) => void;
     onCardLinkClick: (evt: MouseEvent, target: string) => void;
     onCardsScroll: (columnKey: string, scrollTop: number) => void;
@@ -40,7 +50,10 @@
     groups,
     groupByProperty,
     selectedProperties,
-    selectedPaths,
+    selectedPathsStore,
+    initialBoardScrollLeft,
+    initialBoardScrollTop,
+    columnScrollByKey,
     cardTitleSource,
     cardTitleMaxLength,
     propertyValueSeparator,
@@ -129,9 +142,26 @@
     onSetCardDropTarget(targetPath, placement);
   }
 
-  let cardIndex = 0;
+  const startCardIndexes = $derived.by(() => {
+    let runningTotal = 0;
+    return groups.map(({ entries }) => {
+      const start = runningTotal;
+      runningTotal += entries.length;
+      return start;
+    });
+  });
+
+  onMount(() => {
+    if (boardEl === null) {
+      return;
+    }
+    boardEl.scrollLeft = initialBoardScrollLeft;
+    boardEl.scrollTop = initialBoardScrollTop;
+  });
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   bind:this={boardEl}
   class="bases-kanban-board"
@@ -140,22 +170,23 @@
   onkeydown={onBoardKeyDown}
   onclick={handleBoardClick}
   onscroll={handleBoardScroll}
-  role="region"
+  role="application"
   aria-label="Kanban board"
 >
-  {#each groups as { group, entries } (getColumnKey(group.key))}
+  {#each groups as { group, entries }, idx (getColumnKey(group.key))}
     {@const columnKey = getColumnKey(group.key)}
     {@const groupKey = group.key}
-    {@const startIndex = cardIndex}
+    {@const startIndex = startCardIndexes[idx] ?? 0}
     {@const groupEntries = entries}
     <KanbanColumn
       {columnKey}
       {groupKey}
       entries={groupEntries}
       startCardIndex={startIndex}
+      initialScrollTop={columnScrollByKey[columnKey] ?? 0}
       {groupByProperty}
       {selectedProperties}
-      {selectedPaths}
+      {selectedPathsStore}
       {cardTitleSource}
       {cardTitleMaxLength}
       {propertyValueSeparator}
@@ -184,6 +215,5 @@
       onBoardKeyDown={onBoardKeyDown}
       onBoardClick={onBoardClick}
     />
-    {cardIndex = startIndex + entries.length, ""}
   {/each}
 </div>

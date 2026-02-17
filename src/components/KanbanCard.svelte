@@ -26,7 +26,12 @@
     onDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onDragEnd: () => void;
     onSetDropTarget: (targetPath: string | null, placement: "before" | "after" | null) => void;
-    onDrop: (evt: DragEvent, filePath: string | null, groupKey: unknown) => void;
+    onDrop: (
+      evt: DragEvent,
+      filePath: string | null,
+      groupKey: unknown,
+      placement: "before" | "after",
+    ) => void;
     onContextMenu: (evt: MouseEvent) => void;
     onLinkClick: (evt: MouseEvent, target: string) => void;
   }
@@ -58,18 +63,16 @@
   let cardEl: HTMLElement | null = $state(null);
   let isDraggable: boolean = $state(false);
 
-  const filePath = entry.file.path;
-  const fullTitle = getCardTitle(entry, cardTitleSource);
-  const title = truncateTitle(fullTitle, cardTitleMaxLength);
+  const filePath = $derived(entry.file.path);
+  const fullTitle = $derived(getCardTitle(entry, cardTitleSource));
+  const title = $derived(truncateTitle(fullTitle, cardTitleMaxLength));
 
-  const propertiesToDisplay = selectedProperties.filter(
-    (propertyId) =>
-      propertyId !== "file.name" && propertyId !== groupByProperty,
+  const propertiesToDisplay = $derived(
+    selectedProperties.filter(
+      (propertyId) =>
+        propertyId !== "file.name" && propertyId !== groupByProperty,
+    ),
   );
-
-  // Extract stores to local variables
-  const cardTargetPath = cardDragState.targetPath;
-  const cardPlacement = cardDragState.placement;
 
   // Reactive state using methods
   const isDraggingSource = $derived(cardDragState.isDraggingSource(filePath));
@@ -147,7 +150,8 @@
     if (groupByProperty === null) return;
     evt.preventDefault();
     evt.stopPropagation();
-    onDrop(evt, filePath, groupKey);
+    const placement = cardDragState.getDropPlacement(filePath) ?? "after";
+    onDrop(evt, filePath, groupKey, placement);
   }
 
   function handleContextMenu(evt: MouseEvent): void {
@@ -172,6 +176,14 @@
     evt.stopPropagation();
     onLinkClick(evt, target);
   }
+
+  function handleKeyDown(evt: KeyboardEvent): void {
+    if (evt.key !== "Enter" && evt.key !== " ") {
+      return;
+    }
+    evt.preventDefault();
+    onSelect(filePath, evt.shiftKey || evt.metaKey);
+  }
 </script>
 
 <div
@@ -186,6 +198,7 @@
   onclick={handleClick}
   onmousedown={handleMouseDown}
   onmouseup={handleMouseUp}
+  onkeydown={handleKeyDown}
   ondragstart={handleDragStart}
   ondragend={onDragEnd}
   ondragover={handleDragOver}

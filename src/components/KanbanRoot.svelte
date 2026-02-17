@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { BasesEntry, BasesPropertyId, BasesEntryGroup, App } from "obsidian";
+  import type { Readable } from "svelte/store";
   import KanbanBoard from "./KanbanBoard.svelte";
   import KanbanBackground from "./KanbanBackground.svelte";
 
@@ -9,7 +10,10 @@
     groups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>;
     groupByProperty: BasesPropertyId | null;
     selectedProperties: BasesPropertyId[];
-    selectedPaths: Set<string>;
+    selectedPathsStore: Readable<Set<string>>;
+    initialBoardScrollLeft: number;
+    initialBoardScrollTop: number;
+    columnScrollByKey: Record<string, number>;
     cardTitleSource: "basename" | "filename" | "path";
     cardTitleMaxLength: number;
     propertyValueSeparator: string;
@@ -30,7 +34,12 @@
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onCardDragEnd: () => void;
     onSetCardDropTarget: (targetPath: string | null, placement: "before" | "after" | null) => void;
-    onCardDrop: (evt: DragEvent, filePath: string | null, groupKey: unknown) => void;
+    onCardDrop: (
+      evt: DragEvent,
+      filePath: string | null,
+      groupKey: unknown,
+      placement: "before" | "after",
+    ) => void;
     onCardContextMenu: (evt: MouseEvent, entry: BasesEntry) => void;
     onCardLinkClick: (evt: MouseEvent, target: string) => void;
     onCardsScroll: (columnKey: string, scrollTop: number) => void;
@@ -49,7 +58,10 @@
     groups,
     groupByProperty,
     selectedProperties,
-    selectedPaths,
+    selectedPathsStore,
+    initialBoardScrollLeft,
+    initialBoardScrollTop,
+    columnScrollByKey,
     cardTitleSource,
     cardTitleMaxLength,
     propertyValueSeparator,
@@ -102,7 +114,10 @@
   {groups}
   {groupByProperty}
   {selectedProperties}
-  {selectedPaths}
+  {selectedPathsStore}
+  {initialBoardScrollLeft}
+  {initialBoardScrollTop}
+  {columnScrollByKey}
   {cardTitleSource}
   {cardTitleMaxLength}
   {propertyValueSeparator}

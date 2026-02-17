@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { BasesEntry, BasesPropertyId } from "obsidian";
+  import { onDestroy, onMount } from "svelte";
+  import type { Readable } from "svelte/store";
   import KanbanCard from "./KanbanCard.svelte";
   import { getColumnName } from "../kanban-view/utils";
   import type { createCardDragState, createColumnDragState } from "../kanban-view/drag-state";
@@ -9,9 +11,10 @@
     groupKey: unknown;
     entries: BasesEntry[];
     startCardIndex: number;
+    initialScrollTop: number;
     groupByProperty: BasesPropertyId | null;
     selectedProperties: BasesPropertyId[];
-    selectedPaths: Set<string>;
+    selectedPathsStore: Readable<Set<string>>;
     cardTitleSource: "basename" | "filename" | "path";
     cardTitleMaxLength: number;
     propertyValueSeparator: string;
@@ -33,7 +36,12 @@
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onCardDragEnd: () => void;
     onSetCardDropTarget: (targetPath: string | null, placement: "before" | "after" | null) => void;
-    onCardDrop: (evt: DragEvent, filePath: string | null, groupKey: unknown) => void;
+    onCardDrop: (
+      evt: DragEvent,
+      filePath: string | null,
+      groupKey: unknown,
+      placement: "before" | "after",
+    ) => void;
     onCardContextMenu: (evt: MouseEvent, entry: BasesEntry) => void;
     onCardLinkClick: (evt: MouseEvent, target: string) => void;
     onCardsScroll: (scrollTop: number) => void;
@@ -46,9 +54,10 @@
     groupKey,
     entries,
     startCardIndex,
+    initialScrollTop,
     groupByProperty,
     selectedProperties,
-    selectedPaths,
+    selectedPathsStore,
     cardTitleSource,
     cardTitleMaxLength,
     propertyValueSeparator,
@@ -82,11 +91,24 @@
   let cardsEl: HTMLElement | null = $state(null);
   let scrollTimeout: ReturnType<typeof setTimeout> | null = $state(null);
 
-  const columnName = getColumnName(groupKey, emptyColumnLabel);
+  const columnName = $derived(getColumnName(groupKey, emptyColumnLabel));
 
   // Extract stores to local variables so we can use $ prefix
-  const columnIsDragging = columnDragState.isDragging;
-  const cardTargetPath = cardDragState.targetPath;
+  const columnIsDragging = $derived(columnDragState.isDragging);
+  const cardTargetPath = $derived(cardDragState.targetPath);
+  const cardIsDragging = $derived(cardDragState.isDragging);
+
+  onMount(() => {
+    if (cardsEl !== null && initialScrollTop > 0) {
+      cardsEl.scrollTop = initialScrollTop;
+    }
+  });
+
+  onDestroy(() => {
+    if (scrollTimeout !== null) {
+      clearTimeout(scrollTimeout);
+    }
+  });
 </script>
 
 <div
@@ -159,12 +181,13 @@
     class="bases-kanban-cards"
     class:bases-kanban-drop-target={$cardTargetPath !== null}
     ondragover={(evt) => {
-      if (groupByProperty === null || !cardDragState.isDragging()) return;
+      if (groupByProperty === null || !$cardIsDragging) return;
       evt.preventDefault();
     }}
     ondrop={(evt) => {
       evt.preventDefault();
-      onCardDrop(evt, null, groupKey);
+      const placement = cardDragState.getPlacement() ?? "after";
+      onCardDrop(evt, null, groupKey, placement);
     }}
     onscroll={() => {
       if (cardsEl === null) return;
@@ -186,7 +209,7 @@
         {cardIndex}
         {groupByProperty}
         {selectedProperties}
-        selected={selectedPaths.has(filePath)}
+        selected={$selectedPathsStore.has(filePath)}
         {cardTitleSource}
         {cardTitleMaxLength}
         {propertyValueSeparator}

@@ -109,6 +109,11 @@ src/
 - Implement both card and column drag behaviors
 - Update local order state before mutating files
 
+### Svelte 5 migration notes
+- In `.svelte` files, avoid capturing props into plain `const` values when they can change; use `$derived(...)` so updates propagate.
+- Svelte stores are values, not functions. For example, `Readable<boolean>` should be consumed as `$store`, not `store()`.
+- Keep `bun run svelte-check` in the validation loop. It catches reactive/runtime issues that `tsc` and ESLint can miss.
+
 ## Debug Logging
 
 Build-time flags control debug output:

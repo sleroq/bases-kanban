@@ -11,6 +11,7 @@ import {
   TFile,
 } from "obsidian";
 import { mount, unmount } from "svelte";
+import { writable, type Writable } from "svelte/store";
 
 import type BasesKanbanPlugin from "./main";
 import {
@@ -23,7 +24,9 @@ import {
   BACKGROUND_BLUR_OPTION_KEY,
   BACKGROUND_BRIGHTNESS_OPTION_KEY,
   BACKGROUND_IMAGE_OPTION_KEY,
+  BOARD_SCROLL_POSITION_KEY,
   BOARD_SCROLL_STATE_KEY,
+  BOARD_SCROLL_TOP_POSITION_KEY,
   COLUMN_BLUR_OPTION_KEY,
   COLUMN_ORDER_OPTION_KEY,
   COLUMN_TRANSPARENCY_OPTION_KEY,
@@ -45,11 +48,13 @@ import {
   type CardOrderCache,
   saveBoardScrollState,
   loadScrollState,
+  loadLegacyScrollPosition,
   parseColumnOrder,
   serializeColumnOrder,
   parseLocalCardOrder,
   serializeLocalCardOrder,
   saveColumnScrollPosition,
+  loadColumnScrollPosition,
 } from "./kanban-view/state-persistence";
 import {
   type BackgroundManagerState,
@@ -101,6 +106,7 @@ export class KanbanView extends BasesView {
   private partialRenderCount = 0;
   private static readonly PARTIAL_RENDER_REBUILD_THRESHOLD = 10;
   private svelteApp: ReturnType<typeof KanbanRoot> | null = null;
+  private readonly selectedPathsStore: Writable<Set<string>>;
 
   // Drag state (replaces drag-controller)
   private draggingCardSourcePath: string | null = null;
@@ -116,6 +122,7 @@ export class KanbanView extends BasesView {
     this.viewSessionId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     this.backgroundManagerState = createBackgroundManagerState();
     this.selectionState = createSelectionState();
+    this.selectedPathsStore = writable(this.selectionState.selectedPaths);
     this.rootEl = containerEl.createDiv({ cls: "bases-kanban-container" });
     this.mutationService = new KanbanMutationService(this.app as App);
   }
@@ -224,9 +231,11 @@ export class KanbanView extends BasesView {
 
     if (!hasConfiguredGroupBy(groups)) {
       logRenderEvent("Proceeding with FULL DOM RENDER (no group by)");
+      this.unmountSvelteApp();
       this.rootEl.empty();
       this.applyBackgroundStyles();
       this.refreshEntryIndexes(groups);
+      this.updateSvelteProps();
       this.renderPlaceholder();
       return;
     }
@@ -275,6 +284,7 @@ export class KanbanView extends BasesView {
 
   private renderFull(renderedGroups: RenderedGroup[]): void {
     this.refreshEntryIndexesFromRendered(renderedGroups);
+    this.updateSvelteProps();
 
     const selectedProperties = getSelectedProperties(this.data?.properties);
     const rawGroups: BasesEntryGroup[] = this.data?.groupedData ?? [];
@@ -283,11 +293,17 @@ export class KanbanView extends BasesView {
       getPropertyCandidates(selectedProperties, this.allProperties),
     );
 
-    // Unmount existing Svelte app if present
-    if (this.svelteApp !== null) {
-      unmount(this.svelteApp);
-      this.svelteApp = null;
+    const initialBoardScroll = this.getInitialBoardScroll();
+    const columnScrollByKey: Record<string, number> = {};
+    for (const { group } of renderedGroups) {
+      const columnKey = getColumnKey(group.key);
+      columnScrollByKey[columnKey] = loadColumnScrollPosition(
+        this.viewSessionId,
+        columnKey,
+      );
     }
+
+    this.unmountSvelteApp();
 
     this.rootEl.empty();
 
@@ -300,7 +316,10 @@ export class KanbanView extends BasesView {
         groups: renderedGroups,
         groupByProperty,
         selectedProperties,
-        selectedPaths: this.selectionState.selectedPaths,
+        selectedPathsStore: this.selectedPathsStore,
+        initialBoardScrollLeft: initialBoardScroll.left,
+        initialBoardScrollTop: initialBoardScroll.top,
+        columnScrollByKey,
         cardTitleSource: this.plugin.settings.cardTitleSource,
         cardTitleMaxLength: this.plugin.settings.cardTitleMaxLength,
         propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
@@ -327,7 +346,12 @@ export class KanbanView extends BasesView {
         onSetCardDropTarget: (_targetPath: string | null, _placement: "before" | "after" | null) => {
           // Drop target state is now managed in Svelte components
         },
-        onCardDrop: (evt: DragEvent, filePath: string | null, grpKey: unknown) => this.handleCardDrop(evt, filePath, grpKey),
+        onCardDrop: (
+          evt: DragEvent,
+          filePath: string | null,
+          grpKey: unknown,
+          placement: "before" | "after",
+        ) => this.handleCardDrop(evt, filePath, grpKey, placement),
         onCardContextMenu: (evt: MouseEvent, entry: BasesEntry) => this.showCardContextMenu(evt, entry.file),
         onCardLinkClick: (evt: MouseEvent, target: string) => this.handleCardLinkClick(evt, target),
         onCardsScroll: (columnKey: string, scrollTop: number) => this.handleColumnScroll(columnKey, scrollTop),
@@ -703,12 +727,8 @@ export class KanbanView extends BasesView {
   }
 
   private updateSvelteProps(): void {
-    // Trigger a re-render to update selection state
-    // In a more optimized version, we could update only the selection props
-    if (this.svelteApp !== null) {
-      // Svelte 5 will automatically react to prop changes when we implement proper reactivity
-      // For now, we rely on the next render cycle or data update
-    }
+    // Use a fresh Set reference so store subscribers update predictably.
+    this.selectedPathsStore.set(new Set(this.selectionState.selectedPaths));
   }
 
   // Card drag handlers (replaces drag-controller)
@@ -750,6 +770,7 @@ export class KanbanView extends BasesView {
     _evt: DragEvent,
     targetPath: string | null,
     groupKey: unknown,
+    placement: "before" | "after",
   ): Promise<void> {
     if (this.draggingCardSourcePath === null) {
       logDragEvent("Drop aborted - no dragging source");
@@ -769,9 +790,6 @@ export class KanbanView extends BasesView {
       logDragEvent("Drop aborted - no group by property");
       return;
     }
-
-    // Get drop placement from the event or default to "after"
-    const placement: "before" | "after" = "after";
 
     await this.handleDrop(groupByProperty, groupKey, targetPath, placement);
   }
@@ -955,6 +973,40 @@ export class KanbanView extends BasesView {
       this.lastPersistedScrollState = { left: scrollLeft, top: scrollTop };
       this.scrollSaveTimeout = null;
     }, this.plugin.settings.scrollDebounceMs);
+  }
+
+  private getInitialBoardScroll(): { left: number; top: number } {
+    const scrollState = loadScrollState(
+      (key) => this.config?.get(key),
+      BOARD_SCROLL_STATE_KEY,
+    );
+    if (scrollState !== null) {
+      return { left: scrollState.left, top: scrollState.top };
+    }
+
+    const legacy = loadLegacyScrollPosition(
+      (key) => this.config?.get(key),
+      BOARD_SCROLL_POSITION_KEY,
+      BOARD_SCROLL_TOP_POSITION_KEY,
+    );
+    return { left: legacy.scrollLeft, top: legacy.scrollTop };
+  }
+
+  private unmountSvelteApp(): void {
+    if (this.svelteApp === null) {
+      return;
+    }
+    unmount(this.svelteApp);
+    this.svelteApp = null;
+  }
+
+  onClose(): void {
+    if (this.scrollSaveTimeout !== null) {
+      window.clearTimeout(this.scrollSaveTimeout);
+      this.scrollSaveTimeout = null;
+    }
+    this.unmountSvelteApp();
+    this.rootEl.empty();
   }
 
   static getViewOptions() {
