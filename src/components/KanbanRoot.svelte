@@ -33,7 +33,7 @@
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onCardDragEnd: () => void;
-    onSetCardDropTarget: (targetPath: string | null, placement: "before" | "after" | null) => void;
+    onSetCardDropTarget: (targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null) => void;
     onCardDrop: (
       evt: DragEvent,
       filePath: string | null,

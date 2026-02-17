@@ -27,7 +27,7 @@
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onCardDragEnd: () => void;
-    onSetCardDropTarget: (targetPath: string | null, placement: "before" | "after" | null) => void;
+    onSetCardDropTarget: (targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null) => void;
     onCardDrop: (
       evt: DragEvent,
       filePath: string | null,
@@ -137,9 +137,9 @@
     onCardDragEnd();
   }
 
-  function handleSetCardDropTarget(targetPath: string | null, placement: "before" | "after" | null): void {
-    cardDragState.setDropTarget(targetPath, placement);
-    onSetCardDropTarget(targetPath, placement);
+  function handleSetCardDropTarget(targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null): void {
+    cardDragState.setDropTarget(targetPath, targetColumnKey, placement);
+    onSetCardDropTarget(targetPath, targetColumnKey, placement);
   }
 
   const startCardIndexes = $derived.by(() => {

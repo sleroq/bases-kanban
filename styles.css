@@ -167,6 +167,7 @@
 	padding: var(--size-4-2) var(--size-4-3);
 	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
 	transition: box-shadow 0.15s ease, transform 0.1s ease;
+	position: relative;
 }
 
 .bases-kanban-card:hover {
@@ -182,6 +183,26 @@
 .bases-kanban-card.bases-kanban-card-dragging {
 	opacity: 0.55;
 	cursor: grabbing;
+}
+
+.bases-kanban-card.bases-kanban-card-drop-before::before,
+.bases-kanban-card.bases-kanban-card-drop-after::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	height: var(--bases-kanban-drop-indicator-width, 3px);
+	width: 100%;
+	background: var(--interactive-accent);
+	pointer-events: none;
+	z-index: 1;
+}
+
+.bases-kanban-card.bases-kanban-card-drop-before::before {
+	top: -2px;
+}
+
+.bases-kanban-card.bases-kanban-card-drop-after::after {
+	bottom: -2px;
 }
 
 .bases-kanban-cards.bases-kanban-drop-target {

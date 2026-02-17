@@ -35,7 +35,7 @@
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onCardDragEnd: () => void;
-    onSetCardDropTarget: (targetPath: string | null, placement: "before" | "after" | null) => void;
+    onSetCardDropTarget: (targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null) => void;
     onCardDrop: (
       evt: DragEvent,
       filePath: string | null,
@@ -95,7 +95,6 @@
 
   // Extract stores to local variables so we can use $ prefix
   const columnIsDragging = $derived(columnDragState.isDragging);
-  const cardTargetPath = $derived(cardDragState.targetPath);
   const cardIsDragging = $derived(cardDragState.isDragging);
 
   onMount(() => {
@@ -130,7 +129,12 @@
   }}
   ondragleave={(evt) => {
     const relatedTarget = evt.relatedTarget as Node | null;
-    if (columnEl !== null && relatedTarget !== null && columnEl.contains(relatedTarget)) {
+    // Don't clear drop target if relatedTarget is null - HTML5 DnD fires dragleave
+    // with null relatedTarget frequently. Only clear when moving to a different element.
+    if (relatedTarget === null) {
+      return;
+    }
+    if (columnEl !== null && columnEl.contains(relatedTarget)) {
       return;
     }
     onSetColumnDropTarget(null, null);
@@ -179,13 +183,20 @@
   <div
     bind:this={cardsEl}
     class="bases-kanban-cards"
-    class:bases-kanban-drop-target={$cardTargetPath !== null}
+    class:bases-kanban-drop-target={cardDragState.isDropTargetInColumn(columnKey)}
     ondragover={(evt) => {
       if (groupByProperty === null || !$cardIsDragging) return;
       evt.preventDefault();
     }}
     ondrop={(evt) => {
       evt.preventDefault();
+      // Only handle empty-space drops when no specific card is targeted
+      const hasCardTarget = cardDragState.getTargetPath() !== null;
+      if (hasCardTarget) {
+        // A specific card was targeted - let the card's drop handler handle this
+        return;
+      }
+      // Empty space drop - use column's group key
       const placement = cardDragState.getPlacement() ?? "after";
       onCardDrop(evt, null, groupKey, placement);
     }}
@@ -205,6 +216,7 @@
       {@const cardIndex = startCardIndex + i}
       <KanbanCard
         {entry}
+        {columnKey}
         {groupKey}
         {cardIndex}
         {groupByProperty}

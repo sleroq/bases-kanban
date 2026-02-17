@@ -9,6 +9,7 @@
 
   interface Props {
     entry: BasesEntry;
+    columnKey: string;
     groupKey: unknown;
     cardIndex: number;
     groupByProperty: BasesPropertyId | null;
@@ -25,7 +26,7 @@
     onSelect: (filePath: string, extendSelection: boolean) => void;
     onDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
     onDragEnd: () => void;
-    onSetDropTarget: (targetPath: string | null, placement: "before" | "after" | null) => void;
+    onSetDropTarget: (targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null) => void;
     onDrop: (
       evt: DragEvent,
       filePath: string | null,
@@ -38,6 +39,7 @@
 
   let {
     entry,
+    columnKey,
     groupKey,
     cardIndex,
     groupByProperty,
@@ -134,16 +136,21 @@
       const rect = cardEl.getBoundingClientRect();
       const midY = rect.top + rect.height / 2;
       const placement = evt.clientY < midY ? "before" : "after";
-      onSetDropTarget(filePath, placement);
+      onSetDropTarget(filePath, columnKey, placement);
     }
   }
 
   function handleDragLeave(evt: DragEvent): void {
     const relatedTarget = evt.relatedTarget as Node | null;
-    if (cardEl !== null && relatedTarget !== null && cardEl.contains(relatedTarget)) {
+    // Don't clear drop target if relatedTarget is null - HTML5 DnD fires dragleave
+    // with null relatedTarget frequently. Only clear when moving to a different element.
+    if (relatedTarget === null) {
       return;
     }
-    onSetDropTarget(null, null);
+    if (cardEl !== null && cardEl.contains(relatedTarget)) {
+      return;
+    }
+    onSetDropTarget(null, null, null);
   }
 
   function handleDrop(evt: DragEvent): void {

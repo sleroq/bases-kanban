@@ -10,6 +10,7 @@ import { logDragEvent } from "./debug";
 export type CardDragState = {
   sourcePath: string | null;
   targetPath: string | null;
+  targetColumnKey: string | null;
   placement: "before" | "after" | null;
 };
 
@@ -24,13 +25,15 @@ export type ColumnDragState = {
 export function createCardDragState(): {
   sourcePath: Writable<string | null>;
   targetPath: Writable<string | null>;
+  targetColumnKey: Writable<string | null>;
   placement: Writable<"before" | "after" | null>;
   isDragging: Readable<boolean>;
   startDrag: (filePath: string, dataTransfer: DataTransfer | null) => void;
   endDrag: () => void;
-  setDropTarget: (targetPath: string | null, newPlacement: "before" | "after" | null) => void;
+  setDropTarget: (targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null) => void;
   clearDropTarget: () => void;
   isDropTarget: (path: string) => boolean;
+  isDropTargetInColumn: (columnKey: string) => boolean;
   getDropPlacement: (path: string) => "before" | "after" | null;
   isDraggingSource: (path: string) => boolean;
   getSourcePath: () => string | null;
@@ -39,6 +42,7 @@ export function createCardDragState(): {
 } {
   const sourcePath = writable<string | null>(null);
   const targetPath = writable<string | null>(null);
+  const targetColumnKey = writable<string | null>(null);
   const placement = writable<"before" | "after" | null>(null);
 
   const isDragging = derived(sourcePath, ($sourcePath) => $sourcePath !== null);
@@ -46,12 +50,14 @@ export function createCardDragState(): {
   return {
     sourcePath,
     targetPath,
+    targetColumnKey,
     placement,
     isDragging,
 
     startDrag(filePath: string, dataTransfer: DataTransfer | null): void {
       sourcePath.set(filePath);
       targetPath.set(null);
+      targetColumnKey.set(null);
       placement.set(null);
 
       if (dataTransfer !== null) {
@@ -71,24 +77,31 @@ export function createCardDragState(): {
 
       sourcePath.set(null);
       targetPath.set(null);
+      targetColumnKey.set(null);
       placement.set(null);
     },
 
-    setDropTarget(newTargetPath: string | null, newPlacement: "before" | "after" | null): void {
-      if (get(targetPath) === newTargetPath && get(placement) === newPlacement) {
+    setDropTarget(newTargetPath: string | null, newTargetColumnKey: string | null, newPlacement: "before" | "after" | null): void {
+      if (get(targetPath) === newTargetPath && get(targetColumnKey) === newTargetColumnKey && get(placement) === newPlacement) {
         return;
       }
       targetPath.set(newTargetPath);
+      targetColumnKey.set(newTargetColumnKey);
       placement.set(newPlacement);
     },
 
     clearDropTarget(): void {
       targetPath.set(null);
+      targetColumnKey.set(null);
       placement.set(null);
     },
 
     isDropTarget(path: string): boolean {
       return get(targetPath) === path;
+    },
+
+    isDropTargetInColumn(columnKey: string): boolean {
+      return get(targetColumnKey) === columnKey;
     },
 
     getDropPlacement(path: string): "before" | "after" | null {

@@ -343,7 +343,7 @@ export class KanbanView extends BasesView {
         onCardSelect: (filePath: string, extendSelection: boolean) => this.selectCard(filePath, extendSelection),
         onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => this.startCardDrag(evt, filePath, cardIndex),
         onCardDragEnd: () => this.endCardDrag(),
-        onSetCardDropTarget: (_targetPath: string | null, _placement: "before" | "after" | null) => {
+        onSetCardDropTarget: (_targetPath: string | null, _targetColumnKey: string | null, _placement: "before" | "after" | null) => {
           // Drop target state is now managed in Svelte components
         },
         onCardDrop: (
