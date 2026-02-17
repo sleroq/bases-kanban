@@ -45,9 +45,9 @@ export type KanbanRendererHandlers = {
   onSetupCardDragBehavior: (cardEl: HTMLElement) => void;
   onSelectCard: (
     filePath: string,
-    cardIndex: number,
     extendSelection: boolean,
   ) => void;
+  onGetCardIndex: (filePath: string) => number;
   onClearSelection: () => void;
   onStartCardDrag: (
     evt: DragEvent,
@@ -97,8 +97,44 @@ export class KanbanRenderer {
       });
     }
 
+    const columnEl = this.buildColumnElement(
+      columnKey,
+      groupKey,
+      entries,
+      startCardIndex,
+      context,
+    );
+    boardEl.appendChild(columnEl);
+
+    return startCardIndex + entries.length;
+  }
+
+  renderColumnDetached(
+    columnKey: string,
+    groupKey: unknown,
+    entries: BasesEntry[],
+    startCardIndex: number,
+    context: RenderContext,
+  ): HTMLElement {
+    return this.buildColumnElement(
+      columnKey,
+      groupKey,
+      entries,
+      startCardIndex,
+      context,
+    );
+  }
+
+  private buildColumnElement(
+    columnKey: string,
+    groupKey: unknown,
+    entries: BasesEntry[],
+    startCardIndex: number,
+    context: RenderContext,
+  ): HTMLElement {
     const columnName = getColumnName(groupKey, context.emptyColumnLabel);
-    const columnEl = boardEl.createDiv({ cls: "bases-kanban-column" });
+    const columnEl = document.createElement("div");
+    columnEl.classList.add("bases-kanban-column");
     columnEl.dataset.columnKey = columnKey;
     columnEl.style.setProperty(
       "--bases-kanban-column-header-width",
@@ -281,13 +317,25 @@ export class KanbanRenderer {
         placement,
       );
     });
+
+    // Track column scroll position for partial render restoration
+    let scrollTimeout: number | null = null;
+    cardsEl.addEventListener("scroll", () => {
+      if (scrollTimeout !== null) {
+        window.clearTimeout(scrollTimeout);
+      }
+      scrollTimeout = window.setTimeout(() => {
+        this.handlers.onColumnScroll(columnKey, cardsEl.scrollTop);
+      }, 100);
+    });
+
     let cardIndex = startCardIndex;
     for (const entry of entries) {
       this.renderCard(cardsEl, entry, groupKey, cardIndex, context);
       cardIndex += 1;
     }
 
-    return cardIndex;
+    return columnEl;
   }
 
   private renderWikiLinks(
@@ -367,14 +415,10 @@ export class KanbanRenderer {
         return;
       }
 
-      this.handlers.onSelectCard(
-        filePath,
-        cardIndex,
-        evt.shiftKey || evt.metaKey,
-      );
+      this.handlers.onSelectCard(filePath, evt.shiftKey || evt.metaKey);
     });
     cardEl.addEventListener("dragstart", (evt) => {
-      this.handlers.onStartCardDrag(evt, filePath, cardIndex);
+      this.handlers.onStartCardDrag(evt, filePath, this.handlers.onGetCardIndex(filePath));
     });
     cardEl.addEventListener("dragend", () => {
       this.handlers.onEndCardDrag();

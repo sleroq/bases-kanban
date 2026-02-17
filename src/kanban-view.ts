@@ -81,6 +81,7 @@ export class KanbanView extends BasesView {
   private cachedLocalCardOrderRaw = "";
   private cachedColumnOrder: string[] | null = null;
   private cachedColumnOrderRaw = "";
+  private lastColumnPathSnapshots = new Map<string, string[]>();
 
   constructor(
     controller: QueryController,
@@ -115,8 +116,11 @@ export class KanbanView extends BasesView {
       onSetupCardDragBehavior: (cardEl) => {
         this.setupCardDragBehavior(cardEl);
       },
-      onSelectCard: (filePath, cardIndex, extendSelection) => {
-        this.selectCard(filePath, cardIndex, extendSelection);
+      onSelectCard: (filePath, extendSelection) => {
+        this.selectCard(filePath, extendSelection);
+      },
+      onGetCardIndex: (filePath) => {
+        return this.getCardIndex(filePath);
       },
       onClearSelection: () => {
         this.clearSelection();
@@ -234,7 +238,220 @@ export class KanbanView extends BasesView {
     return true;
   }
 
+  private computeColumnSnapshots(
+    renderedGroups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>,
+  ): Map<string, string[]> {
+    const snapshots = new Map<string, string[]>();
+    for (const { group, entries } of renderedGroups) {
+      const columnKey = getColumnKey(group.key);
+      snapshots.set(columnKey, entries.map((e) => e.file.path));
+    }
+    return snapshots;
+  }
+
+  private findChangedColumns(
+    previous: Map<string, string[]>,
+    current: Map<string, string[]>,
+  ): string[] {
+    const changed: string[] = [];
+
+    for (const [key, currentPaths] of current) {
+      const previousPaths = previous.get(key);
+      if (previousPaths === undefined) {
+        // New column
+        changed.push(key);
+        continue;
+      }
+      if (currentPaths.length !== previousPaths.length) {
+        changed.push(key);
+        continue;
+      }
+      for (let i = 0; i < currentPaths.length; i++) {
+        if (currentPaths[i] !== previousPaths[i]) {
+          changed.push(key);
+          break;
+        }
+      }
+    }
+
+    // Check for removed columns
+    for (const key of previous.keys()) {
+      if (!current.has(key)) {
+        changed.push(key);
+      }
+    }
+
+    return changed;
+  }
+
+  private canRenderPartially(
+    renderedGroups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>,
+    _displaySettings: {
+      cardTitleSource: string;
+      cardTitleMaxLength: number;
+      propertyValueSeparator: string;
+      tagPropertySuffix: string;
+      tagSaturation: number;
+      tagLightness: number;
+      tagAlpha: number;
+    },
+    _localCardOrderByColumn: Map<string, string[]>,
+  ): { canPartial: boolean; changedColumns: string[] } {
+    if (!this.hasRenderedBoard || this.lastColumnPathSnapshots.size === 0) {
+      return { canPartial: false, changedColumns: [] };
+    }
+
+    const currentSnapshots = this.computeColumnSnapshots(renderedGroups);
+    const changedColumns = this.findChangedColumns(
+      this.lastColumnPathSnapshots,
+      currentSnapshots,
+    );
+
+    // Check if board structure is unchanged
+    const boardStructureChanged =
+      currentSnapshots.size !== this.lastColumnPathSnapshots.size ||
+      changedColumns.some((key) => !this.lastColumnPathSnapshots.has(key));
+
+    if (boardStructureChanged) {
+      logCacheEvent("Cannot partial render - board structure changed", {
+        previousColumnCount: this.lastColumnPathSnapshots.size,
+        currentColumnCount: currentSnapshots.size,
+        newOrRemovedColumns: changedColumns.filter(
+          (k) => !this.lastColumnPathSnapshots.has(k) || !currentSnapshots.has(k),
+        ).length,
+      });
+      return { canPartial: false, changedColumns: [] };
+    }
+
+    if (changedColumns.length === 0) {
+      return { canPartial: false, changedColumns: [] };
+    }
+
+    // Limit partial render to reasonable number of changed columns
+    if (changedColumns.length > 5) {
+      logCacheEvent("Too many changed columns for partial render", {
+        changedCount: changedColumns.length,
+      });
+      return { canPartial: false, changedColumns: [] };
+    }
+
+    logCacheEvent("Can partial render", {
+      changedColumnCount: changedColumns.length,
+      changedColumns: changedColumns.join(","),
+    });
+
+    return { canPartial: true, changedColumns };
+  }
+
+  private renderPartial(
+    renderedGroups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>,
+    changedColumnKeys: string[],
+    context: RenderContext,
+  ): void {
+    logRenderEvent("PARTIAL RENDER - replacing columns", {
+      changedCount: changedColumnKeys.length,
+      changedKeys: changedColumnKeys.join(","),
+    });
+
+    const boardEl = this.rootEl.querySelector<HTMLElement>(".bases-kanban-board");
+    if (boardEl === null) {
+      logRenderEvent("PARTIAL RENDER - board not found, falling back to full render");
+      return;
+    }
+
+    // Build a map of rendered groups by key for quick lookup
+    const groupByKey = new Map(
+      renderedGroups.map((rg) => [getColumnKey(rg.group.key), rg]),
+    );
+
+    // Calculate starting card index for each column
+    let cardIndex = 0;
+    const columnCardIndexes = new Map<string, number>();
+    for (const { group } of renderedGroups) {
+      const key = getColumnKey(group.key);
+      columnCardIndexes.set(key, cardIndex);
+      const rg = groupByKey.get(key);
+      if (rg !== undefined) {
+        cardIndex += rg.entries.length;
+      }
+    }
+
+    // Replace only changed columns
+    for (const columnKey of changedColumnKeys) {
+      const existingColumn = this.columnElByKey.get(columnKey);
+      const renderedGroup = groupByKey.get(columnKey);
+
+      if (renderedGroup === undefined || existingColumn === undefined || existingColumn === null) {
+        logRenderEvent("PARTIAL RENDER - column not found, skipping", {
+          columnKey,
+        });
+        continue;
+      }
+
+      // Create new column with updated content
+      const startIndex = columnCardIndexes.get(columnKey) ?? 0;
+      const newColumnEl = this.renderer.renderColumnDetached(
+        columnKey,
+        renderedGroup.group.key,
+        renderedGroup.entries,
+        startIndex,
+        context,
+      );
+
+      // Replace in DOM
+      existingColumn.replaceWith(newColumnEl);
+
+      // Update element index
+      this.columnElByKey.set(columnKey, newColumnEl);
+
+      // Update card indexes
+      const cards = newColumnEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
+      for (let i = 0; i < cards.length; i++) {
+        const cardEl = cards[i];
+        const path = cardEl.dataset.cardPath;
+        if (typeof path === "string" && path.length > 0) {
+          this.cardElByPath.set(path, cardEl);
+        }
+      }
+
+      // Restore scroll position for this column if we tracked it
+      this.restoreColumnScrollPosition(columnKey, newColumnEl);
+    }
+
+    // Update global state
+    this.refreshEntryIndexesFromRendered(renderedGroups);
+    this.lastColumnPathSnapshots = this.computeColumnSnapshots(renderedGroups);
+
+    logRenderEvent("PARTIAL RENDER COMPLETE", {
+      replacedColumns: changedColumnKeys.length,
+    });
+  }
+
+  private restoreColumnScrollPosition(
+    columnKey: string,
+    columnEl: HTMLElement,
+  ): void {
+    const scrollTop = this.loadColumnScrollPosition(columnKey);
+    if (scrollTop > 0) {
+      const cardsEl = columnEl.querySelector<HTMLElement>(".bases-kanban-cards");
+      if (cardsEl !== null) {
+        cardsEl.scrollTop = scrollTop;
+      }
+    }
+  }
+
+  private loadColumnScrollPosition(columnKey: string): number {
+    const key = `kanban-col-scroll-${this.viewSessionId}-${columnKey}`;
+    const saved = sessionStorage.getItem(key);
+    if (saved === null) {
+      return 0;
+    }
+    const parsed = Number.parseInt(saved, 10);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
   private updateCheapUI(): void {
+    this.applyBackgroundStyles();
     this.updateSelectionStyles();
   }
 
@@ -273,16 +490,10 @@ export class KanbanView extends BasesView {
       return;
     }
 
-    logRenderEvent("Proceeding with FULL DOM RENDER", {
-      groupCount: groups.length,
-      hasConfiguredGroupBy: hasConfiguredGroupBy(groups),
-    });
-
-    const previousBoardScrollLeft = this.getBoardScrollLeft();
-    this.rootEl.empty();
-    this.applyBackgroundStyles();
-
     if (!hasConfiguredGroupBy(groups)) {
+      logRenderEvent("Proceeding with FULL DOM RENDER (no group by)");
+      this.rootEl.empty();
+      this.applyBackgroundStyles();
       this.refreshEntryIndexes(groups);
       this.clearElementIndexes();
       this.renderPlaceholder();
@@ -298,6 +509,64 @@ export class KanbanView extends BasesView {
         localCardOrderByColumn,
       ),
     }));
+
+    // Try partial render first (for cross-column moves or single-card adds)
+    const { canPartial, changedColumns } = this.canRenderPartially(
+      renderedGroups,
+      displaySettings,
+      localCardOrderByColumn,
+    );
+
+    if (canPartial && changedColumns.length > 0) {
+      const selectedProperties = getSelectedProperties(this.data?.properties);
+      const groupByProperty = detectGroupByProperty(
+        rawGroups,
+        getPropertyCandidates(selectedProperties, this.allProperties),
+      );
+
+      const context: RenderContext = {
+        selectedProperties,
+        groupByProperty,
+        selectedPaths: this.selectedPaths,
+        getDraggingColumnKey: () => this.dragController.getColumnDragSourceKey(),
+        getDraggingSourcePath: () => this.dragController.getCardDragSourcePath(),
+        getColumnDropPlacement: () =>
+          this.dragController.getColumnDropPlacement(),
+        getCardDropPlacement: () => this.dragController.getCardDropPlacement(),
+        getCardDropTargetPath: () => this.dragController.getCardDropTargetPath(),
+        emptyColumnLabel: this.plugin.settings.emptyColumnLabel,
+        addCardButtonText: this.plugin.settings.addCardButtonText,
+        cardTitleSource: this.plugin.settings.cardTitleSource,
+        cardTitleMaxLength: this.plugin.settings.cardTitleMaxLength,
+        propertyValueSeparator: this.plugin.settings.propertyValueSeparator,
+        tagPropertySuffix: this.plugin.settings.tagPropertySuffix,
+        tagSaturation: this.plugin.settings.tagSaturation,
+        tagLightness: this.plugin.settings.tagLightness,
+        tagAlpha: this.plugin.settings.tagAlpha,
+        columnHeaderWidth: this.plugin.settings.columnHeaderWidth,
+      };
+
+      this.renderPartial(renderedGroups, changedColumns, context);
+
+      // Update signature and snapshots for next render
+      this.lastRenderSignature = this.computeRenderSignature(
+        groups,
+        displaySettings,
+        localCardOrderByColumn,
+      );
+
+      return;
+    }
+
+    logRenderEvent("Proceeding with FULL DOM RENDER", {
+      groupCount: groups.length,
+      hasConfiguredGroupBy: hasConfiguredGroupBy(groups),
+    });
+
+    const previousBoardScrollLeft = this.getBoardScrollLeft();
+    this.rootEl.empty();
+    this.applyBackgroundStyles();
+
     this.refreshEntryIndexesFromRendered(renderedGroups);
 
     const selectedProperties = getSelectedProperties(this.data?.properties);
@@ -348,19 +617,32 @@ export class KanbanView extends BasesView {
       cardCount: this.cardElByPath.size,
     });
 
-    const { scrollLeft: scrollLeftToRestore, scrollTop: scrollTopToRestore } =
-      this.hasRenderedBoard
-        ? { scrollLeft: previousBoardScrollLeft, scrollTop: 0 }
-        : this.loadBoardScrollPosition();
-    const finalScrollLeft =
-      previousBoardScrollLeft > 0 ? previousBoardScrollLeft : scrollLeftToRestore;
-    this.restoreBoardScrollPosition(finalScrollLeft, scrollTopToRestore);
+		// Restore column scroll positions for full render
+		for (const { group } of renderedGroups) {
+			const columnKey = getColumnKey(group.key);
+			const columnEl = this.columnElByKey.get(columnKey);
+			if (columnEl !== undefined) {
+				this.restoreColumnScrollPosition(columnKey, columnEl);
+			}
+		}
+
+		// Load saved scroll position to restore vertical scroll
+		const savedScroll = this.loadBoardScrollPosition();
+
+		// Use current horizontal scroll if re-rendering, otherwise use saved
+		const finalScrollLeft = this.hasRenderedBoard
+			? previousBoardScrollLeft
+			: savedScroll.scrollLeft;
+
+		// Always restore vertical scroll from saved state
+		this.restoreBoardScrollPosition(finalScrollLeft, savedScroll.scrollTop);
     this.hasRenderedBoard = true;
     this.lastRenderSignature = this.computeRenderSignature(
       groups,
       displaySettings,
       localCardOrderByColumn,
     );
+    this.lastColumnPathSnapshots = this.computeColumnSnapshots(renderedGroups);
 
     logRenderEvent("FULL RENDER COMPLETE", {
       scrollRestored: !this.hasRenderedBoard,
@@ -1134,11 +1416,14 @@ export class KanbanView extends BasesView {
     }
   }
 
-  private selectCard(
-    filePath: string,
-    cardIndex: number,
-    extendSelection: boolean,
-  ): void {
+  private getCardIndex(filePath: string): number {
+    const index = this.cardOrder.indexOf(filePath);
+    return index === -1 ? 0 : index;
+  }
+
+  private selectCard(filePath: string, extendSelection: boolean): void {
+    const cardIndex = this.getCardIndex(filePath);
+
     if (extendSelection && this.lastSelectedIndex !== null) {
       const [start, end] = sortRange(this.lastSelectedIndex, cardIndex);
       const nextSelection = new Set(this.selectedPaths);
@@ -1307,10 +1592,9 @@ export class KanbanView extends BasesView {
   }
 
   private handleColumnScroll(columnKey: string, scrollTop: number): void {
-    // Stub for vertical column scroll - not currently implemented
-    // This satisfies the KanbanRendererHandlers interface
-    void columnKey;
-    void scrollTop;
+    // Save column scroll position for partial render restoration
+    const key = `kanban-col-scroll-${this.viewSessionId}-${columnKey}`;
+    sessionStorage.setItem(key, String(scrollTop));
   }
 
   private sortGroupsByColumnOrder(
