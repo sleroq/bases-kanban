@@ -38,7 +38,6 @@ import {
   getSelectedProperties,
   getWritablePropertyKey,
   hasConfiguredGroupBy,
-  sortRange,
 } from "./kanban-view/utils";
 import { buildEntryIndexes } from "./kanban-view/indexing";
 import { KanbanDragController } from "./kanban-view/drag-controller";
@@ -77,6 +76,16 @@ import {
   computeColumnSnapshots,
   canRenderPartially,
 } from "./kanban-view/render-pipeline";
+import {
+  type SelectionState,
+  createSelectionState,
+  selectCard as selectCardState,
+  clearSelection as clearSelectionState,
+  getDraggedPaths as getDraggedPathsState,
+  syncSelectionWithEntries,
+  isPathSelected,
+  hasSelection,
+} from "./kanban-view/selection-state";
 
 export class KanbanView extends BasesView {
   type = "kanban";
@@ -85,10 +94,9 @@ export class KanbanView extends BasesView {
   private readonly mutationService: KanbanMutationService;
   private readonly renderer: KanbanRenderer;
   private readonly plugin: BasesKanbanPlugin;
-  private selectedPaths = new Set<string>();
+  private selectionState: SelectionState;
   private cardOrder: string[] = [];
   private entryByPath = new Map<string, BasesEntry>();
-  private lastSelectedIndex: number | null = null;
   private scrollSaveTimeout: number | null = null;
   private backgroundManagerState: BackgroundManagerState;
   private cardElByPath = new Map<string, HTMLElement>();
@@ -112,6 +120,7 @@ export class KanbanView extends BasesView {
     this.plugin = plugin;
     this.viewSessionId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     this.backgroundManagerState = createBackgroundManagerState();
+    this.selectionState = createSelectionState();
     this.rootEl = containerEl.createDiv({ cls: "bases-kanban-container" });
     this.dragController = new KanbanDragController(this.rootEl);
     this.mutationService = new KanbanMutationService(this.app as App);
@@ -403,7 +412,7 @@ export class KanbanView extends BasesView {
       const context: RenderContext = {
         selectedProperties,
         groupByProperty,
-        selectedPaths: this.selectedPaths,
+        selectedPaths: this.selectionState.selectedPaths,
         getDraggingColumnKey: () =>
           this.dragController.getColumnDragSourceKey(),
         getDraggingSourcePath: () =>
@@ -455,7 +464,7 @@ export class KanbanView extends BasesView {
     const context: RenderContext = {
       selectedProperties,
       groupByProperty,
-      selectedPaths: this.selectedPaths,
+      selectedPaths: this.selectionState.selectedPaths,
       getDraggingColumnKey: () => this.dragController.getColumnDragSourceKey(),
       getDraggingSourcePath: () => this.dragController.getCardDragSourcePath(),
       getColumnDropPlacement: () =>
@@ -782,7 +791,7 @@ export class KanbanView extends BasesView {
     // Cmd/Ctrl + configured shortcut key to trash selected files
     const shortcutKey = this.plugin.settings.trashShortcutKey;
     if ((evt.metaKey || evt.ctrlKey) && evt.key === shortcutKey) {
-      if (this.selectedPaths.size === 0) {
+      if (!hasSelection(this.selectionState)) {
         return;
       }
 
@@ -791,7 +800,7 @@ export class KanbanView extends BasesView {
 
       // Get TFile objects from selected paths
       const filesToTrash: TFile[] = [];
-      for (const path of this.selectedPaths) {
+      for (const path of this.selectionState.selectedPaths) {
         const entry = this.entryByPath.get(path);
         if (entry?.file) {
           filesToTrash.push(entry.file);
@@ -945,13 +954,10 @@ export class KanbanView extends BasesView {
     const indexes = buildEntryIndexes(groups);
     this.entryByPath = indexes.entryByPath;
     this.cardOrder = indexes.cardOrder;
-    this.selectedPaths = new Set(
-      [...this.selectedPaths].filter((path) => this.entryByPath.has(path)),
+    this.selectionState = syncSelectionWithEntries(
+      this.selectionState,
+      new Set(this.entryByPath.keys()),
     );
-
-    if (this.selectedPaths.size === 0) {
-      this.lastSelectedIndex = null;
-    }
   }
 
   private refreshEntryIndexesFromRendered(
@@ -960,13 +966,10 @@ export class KanbanView extends BasesView {
     const indexes = buildEntryIndexes(renderedGroups);
     this.entryByPath = indexes.entryByPath;
     this.cardOrder = indexes.cardOrder;
-    this.selectedPaths = new Set(
-      [...this.selectedPaths].filter((path) => this.entryByPath.has(path)),
+    this.selectionState = syncSelectionWithEntries(
+      this.selectionState,
+      new Set(this.entryByPath.keys()),
     );
-
-    if (this.selectedPaths.size === 0) {
-      this.lastSelectedIndex = null;
-    }
   }
 
   private getCardIndex(filePath: string): number {
@@ -977,42 +980,23 @@ export class KanbanView extends BasesView {
   private selectCard(filePath: string, extendSelection: boolean): void {
     const cardIndex = this.getCardIndex(filePath);
 
-    if (extendSelection && this.lastSelectedIndex !== null) {
-      const [start, end] = sortRange(this.lastSelectedIndex, cardIndex);
-      const nextSelection = new Set(this.selectedPaths);
-      for (let index = start; index <= end; index += 1) {
-        const path = this.cardOrder[index];
-        if (path !== undefined) {
-          nextSelection.add(path);
-        }
-      }
-
-      this.selectedPaths = nextSelection;
-      this.lastSelectedIndex = cardIndex;
-      this.updateSelectionStyles();
-      return;
-    }
-
-    if (this.selectedPaths.has(filePath)) {
-      this.selectedPaths.delete(filePath);
-      if (this.selectedPaths.size === 0) {
-        this.lastSelectedIndex = null;
-      }
-    } else {
-      this.selectedPaths = new Set([filePath]);
-      this.lastSelectedIndex = cardIndex;
-    }
+    this.selectionState = selectCardState(
+      this.selectionState,
+      filePath,
+      cardIndex,
+      extendSelection,
+      () => this.cardOrder,
+    );
 
     this.updateSelectionStyles();
   }
 
   private clearSelection(): void {
-    if (this.selectedPaths.size === 0) {
+    if (!hasSelection(this.selectionState)) {
       return;
     }
 
-    this.selectedPaths.clear();
-    this.lastSelectedIndex = null;
+    this.selectionState = clearSelectionState();
     this.updateSelectionStyles();
   }
 
@@ -1024,23 +1008,29 @@ export class KanbanView extends BasesView {
       const path = cardEl.dataset.cardPath;
       cardEl.toggleClass(
         "bases-kanban-card-selected",
-        path !== undefined && this.selectedPaths.has(path),
+        path !== undefined && isPathSelected(this.selectionState, path),
       );
     });
   }
 
   private startDrag(evt: DragEvent, filePath: string, cardIndex: number): void {
-    const draggedPaths = this.getDraggedPaths(filePath);
+    const draggedPaths = getDraggedPathsState(
+      this.selectionState,
+      filePath,
+      this.cardOrder,
+    );
     logDragEvent("Card drag started", {
       sourcePath: filePath,
       cardIndex,
-      selectedCount: this.selectedPaths.size,
+      selectedCount: this.selectionState.selectedPaths.size,
       draggingCount: draggedPaths.length,
     });
 
-    if (!this.selectedPaths.has(filePath)) {
-      this.selectedPaths = new Set([filePath]);
-      this.lastSelectedIndex = cardIndex;
+    if (!isPathSelected(this.selectionState, filePath)) {
+      this.selectionState = {
+        selectedPaths: new Set([filePath]),
+        lastSelectedIndex: cardIndex,
+      };
       this.updateSelectionStyles();
     }
 
@@ -1165,11 +1155,7 @@ export class KanbanView extends BasesView {
   }
 
   private getDraggedPaths(sourcePath: string): string[] {
-    if (!this.selectedPaths.has(sourcePath)) {
-      return [sourcePath];
-    }
-
-    return this.cardOrder.filter((path) => this.selectedPaths.has(path));
+    return getDraggedPathsState(this.selectionState, sourcePath, this.cardOrder);
   }
 
   private getCardEl(path: string): HTMLElement | null {
