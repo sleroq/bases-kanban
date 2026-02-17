@@ -27,6 +27,7 @@ import {
   BOARD_SCROLL_POSITION_KEY,
   BOARD_SCROLL_STATE_KEY,
   BOARD_SCROLL_TOP_POSITION_KEY,
+  COLUMN_BLUR_OPTION_KEY,
   COLUMN_ORDER_OPTION_KEY,
   COLUMN_TRANSPARENCY_OPTION_KEY,
   LOCAL_CARD_ORDER_OPTION_KEY,
@@ -68,6 +69,7 @@ export class KanbanView extends BasesView {
   private cachedResolvedImageUrl: string | null = null;
   private cachedBackgroundFilter: string | null = null;
   private cachedColumnTransparencyValue: number | null = null;
+  private cachedColumnBlurValue: number | null = null;
   private backgroundImageLoadVersion = 0;
   private cardElByPath = new Map<string, HTMLElement>();
   private columnElByKey = new Map<string, HTMLElement>();
@@ -994,6 +996,12 @@ export class KanbanView extends BasesView {
       0,
       100,
     );
+    const columnBlur = this.getConfigNumber(
+      COLUMN_BLUR_OPTION_KEY,
+      this.plugin.settings.columnBlur,
+      0,
+      20,
+    );
 
     // Apply column transparency CSS variable
     const columnTransparencyValue = columnTransparency / 100;
@@ -1003,6 +1011,15 @@ export class KanbanView extends BasesView {
         String(columnTransparencyValue),
       );
       this.cachedColumnTransparencyValue = columnTransparencyValue;
+    }
+
+    // Apply column blur CSS variable
+    if (this.cachedColumnBlurValue !== columnBlur) {
+      this.rootEl.style.setProperty(
+        "--bases-kanban-column-blur",
+        `${columnBlur}px`,
+      );
+      this.cachedColumnBlurValue = columnBlur;
     }
 
     // Manage background element
@@ -1047,6 +1064,7 @@ export class KanbanView extends BasesView {
     }
     this.cachedImageUrl = null;
     this.cachedBackgroundFilter = null;
+    this.cachedColumnBlurValue = null;
   }
 
   private resolveBackgroundImageUrl(rawInput: unknown): string | null {

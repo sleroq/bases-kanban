@@ -38,6 +38,7 @@ export interface BasesKanbanSettings {
   backgroundBrightness: number;
   backgroundBlur: number;
   columnTransparency: number;
+  columnBlur: number;
 }
 
 export const DEFAULT_SETTINGS: BasesKanbanSettings = {
@@ -78,6 +79,7 @@ export const DEFAULT_SETTINGS: BasesKanbanSettings = {
   backgroundBrightness: 100,
   backgroundBlur: 0,
   columnTransparency: 100,
+  columnBlur: 8,
 };
 
 export class KanbanSettingTab extends PluginSettingTab {
@@ -432,6 +434,20 @@ export class KanbanSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.columnTransparency = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Column blur")
+      .setDesc("Blur amount for column backgrounds (0-20px)")
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 20, 1)
+          .setValue(this.plugin.settings.columnBlur)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.columnBlur = value;
             await this.plugin.saveSettings();
           }),
       );

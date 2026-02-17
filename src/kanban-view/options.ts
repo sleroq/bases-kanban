@@ -2,6 +2,7 @@ import {
   BACKGROUND_BLUR_OPTION_KEY,
   BACKGROUND_BRIGHTNESS_OPTION_KEY,
   BACKGROUND_IMAGE_OPTION_KEY,
+  COLUMN_BLUR_OPTION_KEY,
   COLUMN_ORDER_OPTION_KEY,
   COLUMN_TRANSPARENCY_OPTION_KEY,
   LOCAL_CARD_ORDER_OPTION_KEY,
@@ -58,6 +59,15 @@ export function getKanbanViewOptions() {
       min: 0,
       max: 100,
       step: 5,
+    },
+    {
+      key: COLUMN_BLUR_OPTION_KEY,
+      displayName: "Column blur",
+      type: "slider" as const,
+      default: 8,
+      min: 0,
+      max: 20,
+      step: 1,
     },
   ];
 }
