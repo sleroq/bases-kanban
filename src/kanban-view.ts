@@ -156,7 +156,6 @@ export class KanbanView extends BasesView {
       },
     };
     this.renderer = new KanbanRenderer(this.app as App, handlers);
-    this.setupBoardScrollListener();
   }
 
   onDataUpdated(): void {
@@ -432,12 +431,18 @@ export class KanbanView extends BasesView {
     columnEl: HTMLElement,
   ): void {
     const scrollTop = this.loadColumnScrollPosition(columnKey);
-    if (scrollTop > 0) {
+    if (scrollTop <= 0) {
+      return;
+    }
+
+    // Defer scroll restoration to next animation frame when layout is computed
+    window.requestAnimationFrame(() => {
       const cardsEl = columnEl.querySelector<HTMLElement>(".bases-kanban-cards");
       if (cardsEl !== null) {
         cardsEl.scrollTop = scrollTop;
+        logScrollEvent("Column scroll restored", { columnKey, scrollTop });
       }
-    }
+    });
   }
 
   private loadColumnScrollPosition(columnKey: string): number {
@@ -576,6 +581,7 @@ export class KanbanView extends BasesView {
     );
 
     const boardEl = this.rootEl.createDiv({ cls: "bases-kanban-board" });
+    this.setupBoardScrollListener(boardEl);
     const context: RenderContext = {
       selectedProperties,
       groupByProperty,
@@ -669,31 +675,24 @@ export class KanbanView extends BasesView {
       return;
     }
 
-    if (scrollLeft > 0) {
-      boardEl.scrollLeft = scrollLeft;
-    }
-    if (scrollTop > 0) {
-      boardEl.scrollTop = scrollTop;
-    }
-
+    // Defer scroll restoration to next animation frame when layout is computed
     window.requestAnimationFrame(() => {
-      if (this.rootEl.contains(boardEl)) {
-        if (scrollLeft > 0) {
-          boardEl.scrollLeft = scrollLeft;
-        }
-        if (scrollTop > 0) {
-          boardEl.scrollTop = scrollTop;
-        }
+      if (!this.rootEl.contains(boardEl)) {
+        return;
       }
+      if (scrollLeft > 0) {
+        boardEl.scrollLeft = scrollLeft;
+      }
+      if (scrollTop > 0) {
+        boardEl.scrollTop = scrollTop;
+      }
+      logScrollEvent("Board scroll restored", { scrollLeft, scrollTop });
     });
   }
 
-  private setupBoardScrollListener(): void {
-    this.rootEl.addEventListener("scroll", (evt) => {
+  private setupBoardScrollListener(boardEl: HTMLElement): void {
+    boardEl.addEventListener("scroll", (evt) => {
       const target = evt.target as HTMLElement;
-      if (!target.classList.contains("bases-kanban-board")) {
-        return;
-      }
       this.debouncedSaveBoardScrollPosition(target.scrollLeft, target.scrollTop);
     });
   }
