@@ -2,7 +2,7 @@ import {
   App,
   BasesEntry,
   BasesEntryGroup,
-  BasesPropertyId,
+  type BasesPropertyId,
   BasesView,
   Menu,
   Modal,

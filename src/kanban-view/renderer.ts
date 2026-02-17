@@ -1,4 +1,4 @@
-import { App, BasesEntry, BasesPropertyId, TFile } from "obsidian";
+import { App, BasesEntry, type BasesPropertyId, TFile } from "obsidian";
 
 import {
   getCardDropTargetFromColumn,
