@@ -204,9 +204,13 @@ export class KanbanView extends BasesView {
     localCardOrderByColumn: Map<string, string[]>,
   ): string {
     const groupKeys = groups.map((g) => getColumnKey(g.key)).join("|");
-    const entryPaths = groups.flatMap((g) => g.entries.map((e) => e.file.path)).join("|");
+    const entryPaths = groups
+      .flatMap((g) => g.entries.map((e) => e.file.path))
+      .join("|");
     const settingsHash = JSON.stringify(displaySettings);
-    const localOrderHash = JSON.stringify([...localCardOrderByColumn.entries()]);
+    const localOrderHash = JSON.stringify([
+      ...localCardOrderByColumn.entries(),
+    ]);
     const signature = `${groupKeys}::${entryPaths}::${settingsHash}::${localOrderHash}`;
 
     logCacheEvent("Computed render signature", {
@@ -243,7 +247,10 @@ export class KanbanView extends BasesView {
     const snapshots = new Map<string, string[]>();
     for (const { group, entries } of renderedGroups) {
       const columnKey = getColumnKey(group.key);
-      snapshots.set(columnKey, entries.map((e) => e.file.path));
+      snapshots.set(
+        columnKey,
+        entries.map((e) => e.file.path),
+      );
     }
     return snapshots;
   }
@@ -316,7 +323,8 @@ export class KanbanView extends BasesView {
         previousColumnCount: this.lastColumnPathSnapshots.size,
         currentColumnCount: currentSnapshots.size,
         newOrRemovedColumns: changedColumns.filter(
-          (k) => !this.lastColumnPathSnapshots.has(k) || !currentSnapshots.has(k),
+          (k) =>
+            !this.lastColumnPathSnapshots.has(k) || !currentSnapshots.has(k),
         ).length,
       });
       return { canPartial: false, changedColumns: [] };
@@ -352,9 +360,13 @@ export class KanbanView extends BasesView {
       changedKeys: changedColumnKeys.join(","),
     });
 
-    const boardEl = this.rootEl.querySelector<HTMLElement>(".bases-kanban-board");
+    const boardEl = this.rootEl.querySelector<HTMLElement>(
+      ".bases-kanban-board",
+    );
     if (boardEl === null) {
-      logRenderEvent("PARTIAL RENDER - board not found, falling back to full render");
+      logRenderEvent(
+        "PARTIAL RENDER - board not found, falling back to full render",
+      );
       return;
     }
 
@@ -380,7 +392,11 @@ export class KanbanView extends BasesView {
       const existingColumn = this.columnElByKey.get(columnKey);
       const renderedGroup = groupByKey.get(columnKey);
 
-      if (renderedGroup === undefined || existingColumn === undefined || existingColumn === null) {
+      if (
+        renderedGroup === undefined ||
+        existingColumn === undefined ||
+        existingColumn === null
+      ) {
         logRenderEvent("PARTIAL RENDER - column not found, skipping", {
           columnKey,
         });
@@ -404,7 +420,8 @@ export class KanbanView extends BasesView {
       this.columnElByKey.set(columnKey, newColumnEl);
 
       // Update card indexes
-      const cards = newColumnEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
+      const cards =
+        newColumnEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
       for (let i = 0; i < cards.length; i++) {
         const cardEl = cards[i];
         const path = cardEl.dataset.cardPath;
@@ -437,7 +454,9 @@ export class KanbanView extends BasesView {
 
     // Defer scroll restoration to next animation frame when layout is computed
     window.requestAnimationFrame(() => {
-      const cardsEl = columnEl.querySelector<HTMLElement>(".bases-kanban-cards");
+      const cardsEl = columnEl.querySelector<HTMLElement>(
+        ".bases-kanban-cards",
+      );
       if (cardsEl !== null) {
         cardsEl.scrollTop = scrollTop;
         logScrollEvent("Column scroll restored", { columnKey, scrollTop });
@@ -490,7 +509,9 @@ export class KanbanView extends BasesView {
     );
 
     if (this.canSkipFullRender(currentSignature)) {
-      logRenderEvent("SKIPPED - full render not needed, updating cheap UI only");
+      logRenderEvent(
+        "SKIPPED - full render not needed, updating cheap UI only",
+      );
       this.updateCheapUI();
       return;
     }
@@ -533,12 +554,15 @@ export class KanbanView extends BasesView {
         selectedProperties,
         groupByProperty,
         selectedPaths: this.selectedPaths,
-        getDraggingColumnKey: () => this.dragController.getColumnDragSourceKey(),
-        getDraggingSourcePath: () => this.dragController.getCardDragSourcePath(),
+        getDraggingColumnKey: () =>
+          this.dragController.getColumnDragSourceKey(),
+        getDraggingSourcePath: () =>
+          this.dragController.getCardDragSourcePath(),
         getColumnDropPlacement: () =>
           this.dragController.getColumnDropPlacement(),
         getCardDropPlacement: () => this.dragController.getCardDropPlacement(),
-        getCardDropTargetPath: () => this.dragController.getCardDropTargetPath(),
+        getCardDropTargetPath: () =>
+          this.dragController.getCardDropTargetPath(),
         emptyColumnLabel: this.plugin.settings.emptyColumnLabel,
         addCardButtonText: this.plugin.settings.addCardButtonText,
         cardTitleSource: this.plugin.settings.cardTitleSource,
@@ -623,25 +647,25 @@ export class KanbanView extends BasesView {
       cardCount: this.cardElByPath.size,
     });
 
-		// Restore column scroll positions for full render
-		for (const { group } of renderedGroups) {
-			const columnKey = getColumnKey(group.key);
-			const columnEl = this.columnElByKey.get(columnKey);
-			if (columnEl !== undefined) {
-				this.restoreColumnScrollPosition(columnKey, columnEl);
-			}
-		}
+    // Restore column scroll positions for full render
+    for (const { group } of renderedGroups) {
+      const columnKey = getColumnKey(group.key);
+      const columnEl = this.columnElByKey.get(columnKey);
+      if (columnEl !== undefined) {
+        this.restoreColumnScrollPosition(columnKey, columnEl);
+      }
+    }
 
-		// Load saved scroll position to restore vertical scroll
-		const savedScroll = this.loadBoardScrollPosition();
+    // Load saved scroll position to restore vertical scroll
+    const savedScroll = this.loadBoardScrollPosition();
 
-		// Use current horizontal scroll if re-rendering, otherwise use saved
-		const finalScrollLeft = this.hasRenderedBoard
-			? previousBoardScrollLeft
-			: savedScroll.scrollLeft;
+    // Use current horizontal scroll if re-rendering, otherwise use saved
+    const finalScrollLeft = this.hasRenderedBoard
+      ? previousBoardScrollLeft
+      : savedScroll.scrollLeft;
 
-		// Always restore vertical scroll from saved state
-		this.restoreBoardScrollPosition(finalScrollLeft, savedScroll.scrollTop);
+    // Always restore vertical scroll from saved state
+    this.restoreBoardScrollPosition(finalScrollLeft, savedScroll.scrollTop);
     this.hasRenderedBoard = true;
     this.lastRenderSignature = this.computeRenderSignature(
       groups,
@@ -667,7 +691,10 @@ export class KanbanView extends BasesView {
     return boardEl.scrollLeft;
   }
 
-  private restoreBoardScrollPosition(scrollLeft: number, scrollTop: number): void {
+  private restoreBoardScrollPosition(
+    scrollLeft: number,
+    scrollTop: number,
+  ): void {
     const boardEl = this.rootEl.querySelector<HTMLElement>(
       ".bases-kanban-board",
     );
@@ -693,7 +720,10 @@ export class KanbanView extends BasesView {
   private setupBoardScrollListener(boardEl: HTMLElement): void {
     boardEl.addEventListener("scroll", (evt) => {
       const target = evt.target as HTMLElement;
-      this.debouncedSaveBoardScrollPosition(target.scrollLeft, target.scrollTop);
+      this.debouncedSaveBoardScrollPosition(
+        target.scrollLeft,
+        target.scrollTop,
+      );
     });
   }
 
@@ -701,7 +731,10 @@ export class KanbanView extends BasesView {
     scrollLeft: number,
     scrollTop: number,
   ): void {
-    logScrollEvent("Debounced scroll save triggered", { scrollLeft, scrollTop });
+    logScrollEvent("Debounced scroll save triggered", {
+      scrollLeft,
+      scrollTop,
+    });
     if (this.scrollSaveTimeout !== null) {
       window.clearTimeout(this.scrollSaveTimeout);
     }
@@ -718,7 +751,10 @@ export class KanbanView extends BasesView {
       this.lastPersistedScrollState.left === scrollLeft &&
       this.lastPersistedScrollState.top === scrollTop
     ) {
-      logScrollEvent("Scroll save skipped - no change", { scrollLeft, scrollTop });
+      logScrollEvent("Scroll save skipped - no change", {
+        scrollLeft,
+        scrollTop,
+      });
       return;
     }
 
@@ -936,7 +972,10 @@ export class KanbanView extends BasesView {
       }
 
       const nextFilter = `blur(${blur}px) brightness(${brightness}%)`;
-      if (createdBackgroundElement || this.cachedBackgroundFilter !== nextFilter) {
+      if (
+        createdBackgroundElement ||
+        this.cachedBackgroundFilter !== nextFilter
+      ) {
         this.bgEl.style.filter = nextFilter;
         this.cachedBackgroundFilter = nextFilter;
       }
@@ -1043,9 +1082,7 @@ export class KanbanView extends BasesView {
     if (files.length > 1) {
       const confirmed = await new Promise<boolean>((resolve) => {
         const modal = new Modal(this.app as App);
-        modal.titleEl.setText(
-          `Move ${files.length} files to trash?`,
-        );
+        modal.titleEl.setText(`Move ${files.length} files to trash?`);
         modal.contentEl.createEl("p", {
           text: `This will move ${files.length} files to the trash. This action can be undone from the system trash.`,
         });
@@ -1067,7 +1104,8 @@ export class KanbanView extends BasesView {
           text: this.plugin.settings.trashConfirmButtonText,
           cls: "mod-cta",
         });
-        confirmButton.style.backgroundColor = "var(--background-modifier-error)";
+        confirmButton.style.backgroundColor =
+          "var(--background-modifier-error)";
         confirmButton.style.color = "var(--text-on-accent)";
         confirmButton.addEventListener("click", () => {
           resolve(true);
@@ -1243,24 +1281,24 @@ export class KanbanView extends BasesView {
           paths.push(pathValue);
         }
 
-      if (paths.length > 0) {
-        orderByColumn.set(columnKey, paths);
+        if (paths.length > 0) {
+          orderByColumn.set(columnKey, paths);
+        }
       }
-    }
 
-    this.cachedLocalCardOrder = orderByColumn;
-    this.cachedLocalCardOrderRaw = configValue;
-    logCacheEvent("Card order cache SAVED", {
-      columnCount: orderByColumn.size,
-    });
-    return orderByColumn;
-  } catch {
-    logCacheEvent("Card order parse FAILED");
-    this.cachedLocalCardOrder = null;
-    this.cachedLocalCardOrderRaw = configValue;
-    return new Map();
+      this.cachedLocalCardOrder = orderByColumn;
+      this.cachedLocalCardOrderRaw = configValue;
+      logCacheEvent("Card order cache SAVED", {
+        columnCount: orderByColumn.size,
+      });
+      return orderByColumn;
+    } catch {
+      logCacheEvent("Card order parse FAILED");
+      this.cachedLocalCardOrder = null;
+      this.cachedLocalCardOrderRaw = configValue;
+      return new Map();
+    }
   }
-}
 
   private setLocalCardOrderByColumn(
     orderByColumn: Map<string, string[]>,
@@ -1713,9 +1751,8 @@ export class KanbanView extends BasesView {
       }
     });
 
-    const cardEls = this.rootEl.querySelectorAll<HTMLElement>(
-      ".bases-kanban-card",
-    );
+    const cardEls =
+      this.rootEl.querySelectorAll<HTMLElement>(".bases-kanban-card");
     cardEls.forEach((cardEl) => {
       const path = cardEl.dataset.cardPath;
       if (typeof path === "string" && path.length > 0) {

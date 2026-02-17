@@ -12,24 +12,24 @@ import {
 type Placement = "before" | "after";
 
 export type RenderContext = {
-	selectedProperties: BasesPropertyId[];
-	groupByProperty: BasesPropertyId | null;
-	selectedPaths: Set<string>;
-	getDraggingColumnKey: () => string | null;
-	getDraggingSourcePath: () => string | null;
-	getColumnDropPlacement: () => Placement | null;
-	getCardDropPlacement: () => Placement | null;
-	getCardDropTargetPath: () => string | null;
-	emptyColumnLabel: string;
-	addCardButtonText: string;
-	cardTitleSource: "basename" | "filename" | "path";
-	cardTitleMaxLength: number;
-	propertyValueSeparator: string;
-	tagPropertySuffix: string;
-	tagSaturation: number;
-	tagLightness: number;
-	tagAlpha: number;
-	columnHeaderWidth: number;
+  selectedProperties: BasesPropertyId[];
+  groupByProperty: BasesPropertyId | null;
+  selectedPaths: Set<string>;
+  getDraggingColumnKey: () => string | null;
+  getDraggingSourcePath: () => string | null;
+  getColumnDropPlacement: () => Placement | null;
+  getCardDropPlacement: () => Placement | null;
+  getCardDropTargetPath: () => string | null;
+  emptyColumnLabel: string;
+  addCardButtonText: string;
+  cardTitleSource: "basename" | "filename" | "path";
+  cardTitleMaxLength: number;
+  propertyValueSeparator: string;
+  tagPropertySuffix: string;
+  tagSaturation: number;
+  tagLightness: number;
+  tagAlpha: number;
+  columnHeaderWidth: number;
 };
 
 export type KanbanRendererHandlers = {
@@ -43,10 +43,7 @@ export type KanbanRendererHandlers = {
     groupKey: unknown,
   ) => Promise<void>;
   onSetupCardDragBehavior: (cardEl: HTMLElement) => void;
-  onSelectCard: (
-    filePath: string,
-    extendSelection: boolean,
-  ) => void;
+  onSelectCard: (filePath: string, extendSelection: boolean) => void;
   onGetCardIndex: (filePath: string) => number;
   onClearSelection: () => void;
   onStartCardDrag: (
@@ -89,7 +86,9 @@ export class KanbanRenderer {
         this.handlers.onKeyDown(evt);
       });
       boardEl.addEventListener("click", (evt) => {
-        if ((evt.target as HTMLElement).closest(".bases-kanban-card") !== null) {
+        if (
+          (evt.target as HTMLElement).closest(".bases-kanban-card") !== null
+        ) {
           return;
         }
 
@@ -418,7 +417,11 @@ export class KanbanRenderer {
       this.handlers.onSelectCard(filePath, evt.shiftKey || evt.metaKey);
     });
     cardEl.addEventListener("dragstart", (evt) => {
-      this.handlers.onStartCardDrag(evt, filePath, this.handlers.onGetCardIndex(filePath));
+      this.handlers.onStartCardDrag(
+        evt,
+        filePath,
+        this.handlers.onGetCardIndex(filePath),
+      );
     });
     cardEl.addEventListener("dragend", () => {
       this.handlers.onEndCardDrag();

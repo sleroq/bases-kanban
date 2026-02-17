@@ -1,8 +1,4 @@
-import {
-  BasesEntryGroup,
-  BasesPropertyId,
-  NullValue,
-} from "obsidian";
+import { BasesEntryGroup, BasesPropertyId, NullValue } from "obsidian";
 
 import { NO_VALUE_COLUMN, NO_VALUE_COLUMN_KEY } from "./constants";
 
