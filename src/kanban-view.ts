@@ -159,12 +159,10 @@ export class KanbanView extends BasesView {
   }
 
   onDataUpdated(): void {
-    logRenderEvent("onDataUpdated triggered");
     if (this.shouldSkipRenderForOwnScrollUpdate()) {
-      logRenderEvent("SKIPPED - own scroll update detected");
+      logRenderEvent("SKIPPED render - own scroll update detected");
       return;
     }
-    logRenderEvent("Proceeding with render from onDataUpdated");
     this.render();
   }
 
