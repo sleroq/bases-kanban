@@ -41,7 +41,7 @@ import {
   getWritablePropertyKey,
   hasConfiguredGroupBy,
 } from "./kanban-view/utils";
-import { buildEntryIndexes } from "./kanban-view/indexing";
+import { buildEntryIndexes, type EntryGroupLike } from "./kanban-view/indexing";
 import { KanbanMutationService } from "./kanban-view/mutations";
 import {
   type ColumnOrderCache,
@@ -170,10 +170,6 @@ export class KanbanView extends BasesView {
       totalEntries: groups.reduce((sum, g) => sum + g.entries.length, 0),
     });
 
-    // Refresh entry indexes (needed for drag/drop and selection)
-    this.refreshEntryIndexes(groups);
-    this.updateSvelteProps();
-
     // Update background styles (always apply since they may change independently)
     this.applyBackgroundStyles();
 
@@ -192,6 +188,11 @@ export class KanbanView extends BasesView {
     const columnOrder = this.getColumnOrderFromConfig();
     const orderedGroups = sortGroupsByColumnOrder(groups, columnOrder);
     const renderedGroups = buildRenderedGroups(orderedGroups, localCardOrderByColumn);
+
+    // Refresh entry indexes from rendered board order (needed for drag/drop and selection)
+    // Must happen after column order and local card order are applied
+    this.refreshEntryIndexes(renderedGroups);
+    this.updateSvelteProps();
 
     const selectedProperties = getSelectedProperties(this.data?.properties);
     const groupByProperty = detectGroupByProperty(
@@ -622,7 +623,7 @@ export class KanbanView extends BasesView {
     return paths;
   }
 
-  private refreshEntryIndexes(groups: BasesEntryGroup[]): void {
+  private refreshEntryIndexes(groups: EntryGroupLike[]): void {
     const indexes = buildEntryIndexes(groups);
     this.entryByPath = indexes.entryByPath;
     this.cardOrder = indexes.cardOrder;
