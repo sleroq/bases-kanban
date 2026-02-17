@@ -7,18 +7,21 @@
 	overflow: hidden;
 	padding: var(--size-4-3);
 	position: relative;
+	z-index: 0;
+	isolation: isolate;
 	box-sizing: border-box;
 }
 
 /* Background layer with image, blur and brightness */
 .bases-kanban-background {
-	position: fixed;
+	position: absolute;
 	inset: 0;
-	width: 100vw;
-	height: 100vh;
+	width: 100%;
+	height: 100%;
 	background-size: cover;
 	background-position: center;
 	background-repeat: no-repeat;
+	background-attachment: fixed;
 	z-index: 0;
 	pointer-events: none;
 }
@@ -72,7 +75,7 @@
 	align-items: flex-start;
 }
 
-.bases-view.is-grouped.bases-kanban-view {
+.bases-view.is-grouped {
 	padding-bottom: 0 !important;
 }
 
