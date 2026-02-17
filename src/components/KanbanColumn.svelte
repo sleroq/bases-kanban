@@ -143,7 +143,6 @@
     onColumnDrop(columnKey, placement);
   }}
   role="region"
-  aria-label={columnName}
 >
   <div
     class="bases-kanban-column-header"
@@ -162,7 +161,6 @@
       }}
       role="button"
       tabindex="0"
-      aria-label="Drag to reorder column"
     >
       <h3 style:width="{settings.columnHeaderWidth}px">{columnName}</h3>
     </div>
@@ -170,7 +168,6 @@
     <button
       type="button"
       class="bases-kanban-add-card-button"
-      aria-label="Add card to {columnName}"
       draggable="false"
       onmousedown={(evt) => evt.stopPropagation()}
       onclick={(evt) => {

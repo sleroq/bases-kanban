@@ -148,7 +148,6 @@
   onkeydown={onBoardKeyDown}
   onclick={handleBoardClick}
   role="application"
-  aria-label="Kanban board"
 >
   {#each groups as { group, entries }, idx (getColumnKey(group.key))}
     {@const columnKey = getColumnKey(group.key)}
