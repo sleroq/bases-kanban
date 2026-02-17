@@ -118,12 +118,19 @@
 .bases-kanban-column-header h3 {
 	margin: 0;
 	font-size: var(--font-ui-medium);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+	width: var(--bases-kanban-column-header-width, 150px);
+	flex-shrink: 0;
 }
 
 .bases-kanban-column-count {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);
-	margin-inline-end: auto;
+	margin-left: auto;
+	margin-right: var(--size-4-2);
 }
 
 .bases-kanban-add-card-button {

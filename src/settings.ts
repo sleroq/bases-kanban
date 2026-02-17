@@ -23,6 +23,9 @@ export interface BasesKanbanSettings {
 	propertyValueSeparator: string;
 	tagPropertySuffix: string;
 
+	// Column Display
+	columnHeaderWidth: number;
+
 	// Visual
 	tagSaturation: number;
 	tagLightness: number;
@@ -59,6 +62,9 @@ export const DEFAULT_SETTINGS: BasesKanbanSettings = {
 	cardTitleMaxLength: 60,
 	propertyValueSeparator: ", ",
 	tagPropertySuffix: ".tags",
+
+	// Column Display
+	columnHeaderWidth: 150,
 
 	// Visual
 	tagSaturation: 80,
@@ -180,6 +186,23 @@ export class KanbanSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.tagPropertySuffix =
 							value || DEFAULT_SETTINGS.tagPropertySuffix;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		// Column Display Section
+		new Setting(containerEl).setName("Column Display").setHeading();
+
+		new Setting(containerEl)
+			.setName("Column header width")
+			.setDesc("Fixed width in pixels for the column name area. Names longer than this will show ellipsis.")
+			.addSlider((slider) =>
+				slider
+					.setLimits(50, 300, 10)
+					.setValue(this.plugin.settings.columnHeaderWidth)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.columnHeaderWidth = value;
 						await this.plugin.saveSettings();
 					}),
 			);

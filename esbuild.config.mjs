@@ -9,6 +9,14 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === "production";
 
+// Debug flags - set to true for development debugging
+// These are replaced at build time and dead-code-eliminated in production
+const DEBUG_ENABLED = true;
+const DEBUG_RENDERS = true; // Set to false to disable render logging in dev
+const DEBUG_DRAG = true; // Set to false to disable drag logging in dev
+const DEBUG_SCROLL = false; // Set to true to enable scroll logging in dev
+const DEBUG_CACHE = true; // Set to false to disable cache logging in dev
+
 const context = await esbuild.context({
 	banner: {
 		js: banner,
@@ -38,6 +46,13 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
+	define: {
+		DEBUG_ENABLED: String(DEBUG_ENABLED),
+		DEBUG_RENDERS: String(DEBUG_RENDERS),
+		DEBUG_DRAG: String(DEBUG_DRAG),
+		DEBUG_SCROLL: String(DEBUG_SCROLL),
+		DEBUG_CACHE: String(DEBUG_CACHE),
+	},
 });
 
 if (prod) {

@@ -12,23 +12,24 @@ import {
 type Placement = "before" | "after";
 
 export type RenderContext = {
-  selectedProperties: BasesPropertyId[];
-  groupByProperty: BasesPropertyId | null;
-  selectedPaths: Set<string>;
-  getDraggingColumnKey: () => string | null;
-  getDraggingSourcePath: () => string | null;
-  getColumnDropPlacement: () => Placement | null;
-  getCardDropPlacement: () => Placement | null;
-  getCardDropTargetPath: () => string | null;
-  emptyColumnLabel: string;
-  addCardButtonText: string;
-  cardTitleSource: "basename" | "filename" | "path";
-  cardTitleMaxLength: number;
-  propertyValueSeparator: string;
-  tagPropertySuffix: string;
-  tagSaturation: number;
-  tagLightness: number;
-  tagAlpha: number;
+	selectedProperties: BasesPropertyId[];
+	groupByProperty: BasesPropertyId | null;
+	selectedPaths: Set<string>;
+	getDraggingColumnKey: () => string | null;
+	getDraggingSourcePath: () => string | null;
+	getColumnDropPlacement: () => Placement | null;
+	getCardDropPlacement: () => Placement | null;
+	getCardDropTargetPath: () => string | null;
+	emptyColumnLabel: string;
+	addCardButtonText: string;
+	cardTitleSource: "basename" | "filename" | "path";
+	cardTitleMaxLength: number;
+	propertyValueSeparator: string;
+	tagPropertySuffix: string;
+	tagSaturation: number;
+	tagLightness: number;
+	tagAlpha: number;
+	columnHeaderWidth: number;
 };
 
 export type KanbanRendererHandlers = {
@@ -99,6 +100,10 @@ export class KanbanRenderer {
     const columnName = getColumnName(groupKey, context.emptyColumnLabel);
     const columnEl = boardEl.createDiv({ cls: "bases-kanban-column" });
     columnEl.dataset.columnKey = columnKey;
+    columnEl.style.setProperty(
+      "--bases-kanban-column-header-width",
+      `${context.columnHeaderWidth}px`,
+    );
     const headerEl = columnEl.createDiv({ cls: "bases-kanban-column-header" });
     headerEl.draggable = true;
     headerEl.addClass("bases-kanban-column-handle");
