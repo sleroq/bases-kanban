@@ -115,46 +115,6 @@ export function logDebug(
   }
 }
 
-// Measure and log function execution time
-export function measureTime<T>(label: string, fn: () => T, thresholdMs = 0): T {
-  if (!isDebugEnabled()) {
-    return fn();
-  }
-
-  const start = performance.now();
-  const result = fn();
-  const duration = performance.now() - start;
-
-  if (duration >= thresholdMs) {
-    const timestamp = new Date().toISOString().split("T")[1]?.split(".")[0];
-    console.log(`[${timestamp}] [PERF] ${label}: ${duration.toFixed(2)}ms`);
-  }
-
-  return result;
-}
-
-// Async version of measureTime
-export async function measureTimeAsync<T>(
-  label: string,
-  fn: () => Promise<T>,
-  thresholdMs = 0,
-): Promise<T> {
-  if (!isDebugEnabled()) {
-    return fn();
-  }
-
-  const start = performance.now();
-  const result = await fn();
-  const duration = performance.now() - start;
-
-  if (duration >= thresholdMs) {
-    const timestamp = new Date().toISOString().split("T")[1]?.split(".")[0];
-    console.log(`[${timestamp}] [PERF] ${label}: ${duration.toFixed(2)}ms`);
-  }
-
-  return result;
-}
-
 // Check if debug mode is active (useful for conditional UI elements)
 export function isDebugModeActive(): boolean {
   return isDebugEnabled();

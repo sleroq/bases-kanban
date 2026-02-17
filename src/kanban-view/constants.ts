@@ -10,5 +10,3 @@ export const BACKGROUND_BRIGHTNESS_OPTION_KEY = "backgroundBrightness";
 export const BACKGROUND_BLUR_OPTION_KEY = "backgroundBlur";
 export const COLUMN_TRANSPARENCY_OPTION_KEY = "columnTransparency";
 export const COLUMN_BLUR_OPTION_KEY = "columnBlur";
-export const GROUP_BY_PLACEHOLDER =
-  'Set "Group by" in the sort menu to organize cards into columns.';

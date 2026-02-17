@@ -104,24 +104,6 @@ export function formatPropertyValue(value: unknown): string | null {
   return stringValue.length > 0 ? stringValue : null;
 }
 
-export function parseSingleWikiLink(
-  value: string,
-): { target: string; display: string } | null {
-  const match = value.match(/^\[\[([^\]|]+(?:#[^\]|]+)?)(?:\|([^\]]+))?\]\]$/);
-  if (match === null) {
-    return null;
-  }
-
-  const target = match[1].trim();
-  if (target.length === 0) {
-    return null;
-  }
-
-  const alias = match[2]?.trim();
-  const display = alias && alias.length > 0 ? alias : target;
-  return { target, display };
-}
-
 export interface ParsedWikiLink {
   target: string;
   display: string;
@@ -212,42 +194,6 @@ export function getWritablePropertyKey(
   }
 
   return propertyId.slice(lastDotIndex + 1);
-}
-
-export function reorderPaths(
-  paths: string[],
-  movedPath: string,
-  targetPath: string | null,
-  placement: "before" | "after",
-): string[] {
-  if (targetPath === movedPath) {
-    return paths;
-  }
-
-  const nextPaths = paths.filter((path) => path !== movedPath);
-  if (targetPath === null) {
-    nextPaths.push(movedPath);
-    return nextPaths;
-  }
-
-  const targetIndex = nextPaths.indexOf(targetPath);
-  if (targetIndex === -1) {
-    nextPaths.push(movedPath);
-    return nextPaths;
-  }
-
-  const insertionIndex = placement === "before" ? targetIndex : targetIndex + 1;
-  nextPaths.splice(insertionIndex, 0, movedPath);
-  return nextPaths;
-}
-
-export function toFiniteNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value instanceof NullValue) {
-    return null;
-  }
-
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : null;
 }
 
 export function getCardDropTargetFromColumn(

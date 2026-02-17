@@ -21,20 +21,3 @@ export function buildEntryIndexes(groups: EntryGroupLike[]): {
 
   return { entryByPath, cardOrder };
 }
-
-export function getElementByDataset(
-  rootEl: HTMLElement,
-  selector: string,
-  datasetKey: string,
-  value: string,
-): HTMLElement | null {
-  const elements = rootEl.querySelectorAll<HTMLElement>(selector);
-  for (let index = 0; index < elements.length; index += 1) {
-    const element = elements.item(index);
-    if (element.dataset[datasetKey] === value) {
-      return element;
-    }
-  }
-
-  return null;
-}

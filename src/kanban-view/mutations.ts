@@ -20,12 +20,8 @@ type HandleDropArgs = {
   groupByProperty: BasesPropertyId | null;
   groupByPropertyKey: string | null;
   groupKey: unknown;
-  targetPath: string | null;
-  placement: "before" | "after";
-  draggingSourcePath: string;
   draggedPaths: string[];
   entryByPath: Map<string, BasesEntry>;
-  getColumnKey: (groupKey: unknown) => string;
 };
 
 export class KanbanMutationService {

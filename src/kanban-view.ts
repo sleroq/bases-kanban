@@ -350,16 +350,6 @@ export class KanbanView extends BasesView {
 
   private canRenderPartially(
     renderedGroups: Array<{ group: BasesEntryGroup; entries: BasesEntry[] }>,
-    _displaySettings: {
-      cardTitleSource: string;
-      cardTitleMaxLength: number;
-      propertyValueSeparator: string;
-      tagPropertySuffix: string;
-      tagSaturation: number;
-      tagLightness: number;
-      tagAlpha: number;
-    },
-    _localCardOrderByColumn: Map<string, string[]>,
   ): { canPartial: boolean; changedColumns: string[] } {
     if (!this.hasRenderedBoard || this.lastColumnPathSnapshots.size === 0) {
       return { canPartial: false, changedColumns: [] };
@@ -605,11 +595,7 @@ export class KanbanView extends BasesView {
     }));
 
     // Try partial render first (for cross-column moves or single-card adds)
-    const { canPartial, changedColumns } = this.canRenderPartially(
-      renderedGroups,
-      displaySettings,
-      localCardOrderByColumn,
-    );
+    const { canPartial, changedColumns } = this.canRenderPartially(renderedGroups);
 
     if (canPartial && changedColumns.length > 0) {
       const context: RenderContext = {
@@ -733,9 +719,11 @@ export class KanbanView extends BasesView {
       groupByProperty,
     );
     this.lastColumnPathSnapshots = this.computeColumnSnapshots(renderedGroups);
+    const scrollRestored = !this.hasRenderedBoard;
+    this.hasRenderedBoard = true;
 
     logRenderEvent("FULL RENDER COMPLETE", {
-      scrollRestored: !this.hasRenderedBoard,
+      scrollRestored,
       finalScrollLeft,
     });
   }
@@ -1883,17 +1871,12 @@ export class KanbanView extends BasesView {
       groupByProperty,
       groupByPropertyKey: getWritablePropertyKey(groupByProperty),
       groupKey,
-      targetPath,
-      placement,
-      draggingSourcePath,
       draggedPaths,
       entryByPath: this.entryByPath,
-      getColumnKey,
     });
 
     if (sourceColumnKey === targetColumnKey) {
       logDragEvent("Same column drop - skipping render (rely on reactivity)");
-      // this.render(); commented out for debugging rendering
     } else {
       logDragEvent("Cross-column drop - expecting re-render from data update");
     }
