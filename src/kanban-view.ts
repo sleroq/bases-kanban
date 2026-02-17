@@ -18,6 +18,7 @@ import {
   BACKGROUND_BRIGHTNESS_OPTION_KEY,
   BACKGROUND_IMAGE_OPTION_KEY,
   BOARD_SCROLL_POSITION_KEY,
+  BOARD_SCROLL_STATE_KEY,
   BOARD_SCROLL_TOP_POSITION_KEY,
   COLUMN_ORDER_OPTION_KEY,
   COLUMN_TRANSPARENCY_OPTION_KEY,
@@ -63,6 +64,11 @@ export class KanbanView extends BasesView {
   private backgroundImageLoadVersion = 0;
   private cardElByPath = new Map<string, HTMLElement>();
   private columnElByKey = new Map<string, HTMLElement>();
+  private viewSessionId: string;
+  private scrollRevision = 0;
+  private pendingLocalScrollRevision: number | null = null;
+  private hasRenderedBoard = false;
+  private lastPersistedScrollState: { left: number; top: number } | null = null;
 
   constructor(
     controller: QueryController,
@@ -71,6 +77,7 @@ export class KanbanView extends BasesView {
   ) {
     super(controller);
     this.plugin = plugin;
+    this.viewSessionId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     this.rootEl = containerEl.createDiv({ cls: "bases-kanban-container" });
     this.dragController = new KanbanDragController(this.rootEl);
     this.mutationService = new KanbanMutationService(this.app as App);
@@ -136,7 +143,29 @@ export class KanbanView extends BasesView {
   }
 
   onDataUpdated(): void {
+    if (this.shouldSkipRenderForOwnScrollUpdate()) {
+      return;
+    }
+    console.log("Rendering Kanban View Because the data has been updated");
     this.render();
+  }
+
+  private shouldSkipRenderForOwnScrollUpdate(): boolean {
+    if (this.pendingLocalScrollRevision === null) {
+      return false;
+    }
+
+    const scrollState = this.loadScrollState();
+    if (
+      scrollState !== null &&
+      scrollState.sessionId === this.viewSessionId &&
+      scrollState.revision === this.pendingLocalScrollRevision
+    ) {
+      this.pendingLocalScrollRevision = null;
+      return true;
+    }
+
+    return false;
   }
 
   private render(): void {
@@ -209,10 +238,13 @@ export class KanbanView extends BasesView {
     this.refreshElementIndexes();
 
     const { scrollLeft: scrollLeftToRestore, scrollTop: scrollTopToRestore } =
-      this.loadBoardScrollPosition();
+      this.hasRenderedBoard
+        ? { scrollLeft: previousBoardScrollLeft, scrollTop: 0 }
+        : this.loadBoardScrollPosition();
     const finalScrollLeft =
       previousBoardScrollLeft > 0 ? previousBoardScrollLeft : scrollLeftToRestore;
     this.restoreBoardScrollPosition(finalScrollLeft, scrollTopToRestore);
+    this.hasRenderedBoard = true;
   }
 
   private getBoardScrollLeft(): number {
@@ -270,17 +302,45 @@ export class KanbanView extends BasesView {
       window.clearTimeout(this.scrollSaveTimeout);
     }
     this.scrollSaveTimeout = window.setTimeout(() => {
+      console.log("Saving scroll position");
       this.saveBoardScrollPosition(scrollLeft, scrollTop);
       this.scrollSaveTimeout = null;
     }, this.plugin.settings.scrollDebounceMs);
   }
 
   private saveBoardScrollPosition(scrollLeft: number, scrollTop: number): void {
-    this.config?.set(BOARD_SCROLL_POSITION_KEY, String(scrollLeft));
-    this.config?.set(BOARD_SCROLL_TOP_POSITION_KEY, String(scrollTop));
+    if (
+      this.lastPersistedScrollState !== null &&
+      this.lastPersistedScrollState.left === scrollLeft &&
+      this.lastPersistedScrollState.top === scrollTop
+    ) {
+      return;
+    }
+
+    this.scrollRevision += 1;
+    this.pendingLocalScrollRevision = this.scrollRevision;
+    this.lastPersistedScrollState = { left: scrollLeft, top: scrollTop };
+
+    const scrollState = {
+      left: scrollLeft,
+      top: scrollTop,
+      sessionId: this.viewSessionId,
+      revision: this.scrollRevision,
+      updatedAt: Date.now(),
+    };
+
+    this.config?.set(BOARD_SCROLL_STATE_KEY, JSON.stringify(scrollState));
   }
 
   private loadBoardScrollPosition(): { scrollLeft: number; scrollTop: number } {
+    const scrollState = this.loadScrollState();
+    if (scrollState !== null) {
+      return {
+        scrollLeft: scrollState.left,
+        scrollTop: scrollState.top,
+      };
+    }
+
     const scrollLeftValue = this.config?.get(BOARD_SCROLL_POSITION_KEY);
     const scrollTopValue = this.config?.get(BOARD_SCROLL_TOP_POSITION_KEY);
 
@@ -302,6 +362,64 @@ export class KanbanView extends BasesView {
     }
 
     return { scrollLeft, scrollTop };
+  }
+
+  private loadScrollState(): {
+    left: number;
+    top: number;
+    sessionId: string;
+    revision: number;
+    updatedAt: number;
+  } | null {
+    const stateValue = this.config?.get(BOARD_SCROLL_STATE_KEY);
+    if (typeof stateValue !== "string" || stateValue.length === 0) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(stateValue) as unknown;
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        !("left" in parsed) ||
+        !("top" in parsed) ||
+        !("sessionId" in parsed) ||
+        !("revision" in parsed)
+      ) {
+        return null;
+      }
+
+      const state = parsed as {
+        left: unknown;
+        top: unknown;
+        sessionId: unknown;
+        revision: unknown;
+        updatedAt?: unknown;
+      };
+
+      const left =
+        typeof state.left === "number" && !Number.isNaN(state.left)
+          ? state.left
+          : 0;
+      const top =
+        typeof state.top === "number" && !Number.isNaN(state.top)
+          ? state.top
+          : 0;
+      const sessionId =
+        typeof state.sessionId === "string" ? state.sessionId : "";
+      const revision =
+        typeof state.revision === "number" && !Number.isNaN(state.revision)
+          ? state.revision
+          : 0;
+      const updatedAt =
+        typeof state.updatedAt === "number" && !Number.isNaN(state.updatedAt)
+          ? state.updatedAt
+          : 0;
+
+      return { left, top, sessionId, revision, updatedAt };
+    } catch {
+      return null;
+    }
   }
 
   private renderPlaceholder(): void {
@@ -978,7 +1096,7 @@ export class KanbanView extends BasesView {
     }
     orderedKeys.splice(insertionIndex, 0, moved);
     this.updateColumnOrder(orderedKeys);
-    this.render();
+    // this.render(); commented out for debugging rendering
   }
 
   private handleColumnScroll(columnKey: string, scrollTop: number): void {
@@ -1134,7 +1252,7 @@ export class KanbanView extends BasesView {
     });
 
     if (sourceColumnKey === targetColumnKey) {
-      this.render();
+      // this.render(); commented out for debugging rendering
     }
   }
 
