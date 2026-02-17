@@ -113,6 +113,9 @@ src/
 - In `.svelte` files, avoid capturing props into plain `const` values when they can change; use `$derived(...)` so updates propagate.
 - Svelte stores are values, not functions. For example, `Readable<boolean>` should be consumed as `$store`, not `store()`.
 - Keep `bun run svelte-check` in the validation loop. It catches reactive/runtime issues that `tsc` and ESLint can miss.
+- HTML5 drag events often fire `dragleave` with `relatedTarget === null`; avoid clearing drop state on that case or drops can fall back to column-bottom placement unexpectedly.
+- Keep card-column drop highlight scoped to the hovered column key/path; using only a global "has target" check causes all columns to highlight.
+- After Svelte migration, avoid re-introducing imperative DOM renderer/index-reconciliation paths unless strictly needed; they tend to duplicate Svelte reactivity and create dead code.
 
 ## Debug Logging
 
