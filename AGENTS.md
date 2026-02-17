@@ -10,6 +10,7 @@ Obsidian plugin providing a Kanban view for Bases.
 | Production build | `bun run build` |
 | Type check only | `bun run typecheck` |
 | Lint | `bun run lint` |
+| Lint specific file | `bun eslint ./src/path/to/file.ts` |
 | Install deps | `bun install` |
 
 **Note**: No test framework is configured in this project.
@@ -21,53 +22,7 @@ Obsidian plugin providing a Kanban view for Bases.
 - **Entry Point**: `src/main.ts` → `main.js`
 - **Target**: ES2018, CommonJS format
 - **External**: `obsidian`, `electron`, and CodeMirror packages are externalized
-
-## TypeScript Configuration
-
-- **Strict Mode**: Enabled (`strict: true`)
-- **Module**: ESNext with bundler resolution
-- **Target**: ES2018
-- **Lib**: DOM, ES2022
-- **Source Maps**: Inline (dev), none (prod)
-
-Always include explicit return types on public/exported functions.
-
-## Code Style
-
-### Formatting
-
-- **Indentation**: Tabs (not spaces)
-- **Quotes**: Double quotes for strings
-- **Semicolons**: Required
-- **Trailing Commas**: Always use in objects/arrays
-- **Line Endings**: Unix-style (LF)
-
-### Naming Conventions
-
-| Construct | Style | Example |
-|-----------|-------|---------|
-| Types/Interfaces | PascalCase | `BasesKanbanSettings` |
-| Classes | PascalCase | `KanbanRenderer` |
-| Functions | camelCase | `getColumnName()` |
-| Variables | camelCase | `rootEl` |
-| Constants (exported) | UPPER_SNAKE_CASE | `DEFAULT_SETTINGS` |
-| Constants (local) | camelCase | `emptyColumnLabel` |
-| Private members | `private` modifier | `private readonly plugin` |
-| Boolean variables | Prefix with verb | `hasConfiguredGroupBy` |
-
-### Imports
-
-- Use `import type` for type-only imports
-- Group imports: external libs first, then internal modules
-- Sort imports alphabetically within groups
-- Use named exports/imports preferentially
-
-Example:
-```typescript
-import { App, BasesEntry } from "obsidian";
-import type BasesKanbanPlugin from "./main";
-import { DEFAULT_SETTINGS } from "./settings";
-```
+- **Debug Flags**: Build-time defines in esbuild.config.mjs control logging
 
 ### Type Patterns
 
@@ -115,6 +70,7 @@ src/
 ├── kanban-view.ts         # Main view component
 └── kanban-view/
     ├── constants.ts       # String constants and keys
+    ├── debug.ts          # Debug logging utilities
     ├── drag-controller.ts # Drag and drop logic
     ├── indexing.ts        # DOM element indexing utilities
     ├── mutations.ts       # File/vault mutations
@@ -130,15 +86,38 @@ src/
 - Use `PluginSettingTab` for settings UI
 - Use `Menu`, `Modal`, `Notice` for UI interactions
 - Access vault via `this.app.vault`
-
-## CI/CD
-
-- GitHub Actions run lint and build on every push/PR
-- Release workflow triggers on tags, uploads `main.js`, `manifest.json`, `styles.css`
-- Bun version: 1.1
+- Use `registerBasesView` to register custom Bases views
 
 ## ESLint Rules
 
 - Uses `typescript-eslint` recommended config
 - Unused vars must start with `_` (ignored)
 - Ignores: `old-version/`, `node_modules/`, `main.js`, `versions.json`
+- Project-aware parsing with type information
+
+## Key Implementation Patterns
+
+### View Lifecycle
+- `onDataUpdated()` triggers renders when data changes
+- Implement partial rendering for performance on card moves
+- Use session storage for scroll position persistence
+
+### Drag and Drop
+- Use `KanbanDragController` for drag state management
+- Implement both card and column drag behaviors
+- Update local order state before mutating files
+
+## Debug Logging
+
+Build-time flags control debug output:
+- `DEBUG_ENABLED`: Master switch
+- `DEBUG_RENDERS`: Render cycle logging
+- `DEBUG_DRAG`: Drag operation logging
+- `DEBUG_SCROLL`: Scroll position logging
+- `DEBUG_CACHE`: Cache hit/miss logging
+
+All debug functions are in `kanban-view/debug.ts`.
+
+## A note to the agent
+
+We are building this together. When you learn something non-obvious, add it to the AGENTS.md file of the corresponding project so future changes can go faster.
