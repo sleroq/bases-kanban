@@ -80,9 +80,7 @@ export function applyLocalCardOrder(
     return entries;
   }
 
-  const entryByPath = new Map(
-    entries.map((entry) => [entry.file.path, entry]),
-  );
+  const entryByPath = new Map(entries.map((entry) => [entry.file.path, entry]));
   const nextEntries: BasesEntry[] = [];
   const usedPaths = new Set<string>();
 
@@ -126,5 +124,3 @@ export function buildRenderedGroups(
     ),
   }));
 }
-
-

@@ -31,6 +31,8 @@ import {
   COLUMN_ORDER_OPTION_KEY,
   COLUMN_TRANSPARENCY_OPTION_KEY,
   LOCAL_CARD_ORDER_OPTION_KEY,
+  NO_VALUE_COLUMN_KEY,
+  PINNED_COLUMNS_OPTION_KEY,
 } from "./kanban-view/constants";
 import { getKanbanViewOptions } from "./kanban-view/options";
 import {
@@ -46,6 +48,7 @@ import { KanbanMutationService } from "./kanban-view/mutations";
 import {
   type ColumnOrderCache,
   type CardOrderCache,
+  type PinnedColumnsCache,
   saveBoardScrollState,
   loadScrollState,
   loadLegacyScrollPosition,
@@ -55,6 +58,8 @@ import {
   serializeLocalCardOrder,
   saveColumnScrollPosition,
   loadColumnScrollPosition,
+  parsePinnedColumns,
+  serializePinnedColumns,
 } from "./kanban-view/state-persistence";
 import { resolveBackgroundStyles } from "./kanban-view/background-manager";
 
@@ -88,13 +93,20 @@ export class KanbanView extends BasesView {
   private viewSessionId: string;
   private localCardOrderCache: CardOrderCache = { order: null, raw: "" };
   private columnOrderCache: ColumnOrderCache = { order: null, raw: "" };
+  private pinnedColumnsCache: PinnedColumnsCache = { columns: null, raw: "" };
   private svelteApp: ReturnType<typeof KanbanRoot> | null = null;
   private readonly selectedPathsStore: Writable<Set<string>>;
   // Use stores for all reactive data that needs external updates
   private readonly groupsStore: Writable<RenderedGroup[]> = writable([]);
-  private readonly groupByPropertyStore: Writable<BasesPropertyId | null> = writable(null);
-  private readonly selectedPropertiesStore: Writable<BasesPropertyId[]> = writable([]);
-  private readonly columnScrollByKeyStore: Writable<Record<string, number>> = writable({});
+  private readonly groupByPropertyStore: Writable<BasesPropertyId | null> =
+    writable(null);
+  private readonly selectedPropertiesStore: Writable<BasesPropertyId[]> =
+    writable([]);
+  private readonly columnScrollByKeyStore: Writable<Record<string, number>> =
+    writable({});
+  private readonly pinnedColumnsStore: Writable<Set<string>> = writable(
+    new Set(),
+  );
   // Cache of current rendered groups for data-driven operations
   // Avoids DOM queries for card order operations
   private currentRenderedGroups: RenderedGroup[] = [];
@@ -151,7 +163,12 @@ export class KanbanView extends BasesView {
     logRenderEvent("render() called");
 
     const rawGroups: BasesEntryGroup[] = this.data?.groupedData ?? [];
-    const groups = mergeGroupsByColumnKey(rawGroups);
+    const pinnedColumns = this.getPinnedColumnsFromConfig();
+    const groupsWithPinned = this.injectPinnedEmptyColumns(
+      rawGroups,
+      pinnedColumns,
+    );
+    const groups = mergeGroupsByColumnKey(groupsWithPinned);
 
     const localCardOrderByColumn = this.getLocalCardOrderByColumn();
     logRenderEvent("Data prepared", {
@@ -177,7 +194,10 @@ export class KanbanView extends BasesView {
 
     const columnOrder = this.getColumnOrderFromConfig();
     const orderedGroups = sortGroupsByColumnOrder(groups, columnOrder);
-    const renderedGroups = buildRenderedGroups(orderedGroups, localCardOrderByColumn);
+    const renderedGroups = buildRenderedGroups(
+      orderedGroups,
+      localCardOrderByColumn,
+    );
 
     // Debug: Log first column's entry order
     if (renderedGroups.length > 0) {
@@ -186,7 +206,7 @@ export class KanbanView extends BasesView {
       logRenderEvent("First column entries", {
         columnKey,
         entryCount: firstColumn.entries.length,
-        firstPaths: firstColumn.entries.slice(0, 3).map(e => e.file.path),
+        firstPaths: firstColumn.entries.slice(0, 3).map((e) => e.file.path),
       });
     }
 
@@ -209,7 +229,11 @@ export class KanbanView extends BasesView {
       this.mountSvelteApp(renderedGroups, groupByProperty, selectedProperties);
     } else {
       logRenderEvent("Updating Svelte app props (Svelte handles DOM diffing)");
-      this.updateSvelteAppProps(renderedGroups, groupByProperty, selectedProperties);
+      this.updateSvelteAppProps(
+        renderedGroups,
+        groupByProperty,
+        selectedProperties,
+      );
     }
 
     logRenderEvent("Render complete");
@@ -236,6 +260,7 @@ export class KanbanView extends BasesView {
     this.groupByPropertyStore.set(groupByProperty);
     this.selectedPropertiesStore.set(selectedProperties);
     this.columnScrollByKeyStore.set(columnScrollByKey);
+    this.pinnedColumnsStore.set(new Set(this.getPinnedColumnsFromConfig()));
 
     // Mount Svelte app once
     this.svelteApp = mount(KanbanRoot, {
@@ -249,23 +274,39 @@ export class KanbanView extends BasesView {
         initialBoardScrollTop: initialBoardScroll.top,
         settings: this.plugin.settings,
         backgroundImage: this.config?.get(BACKGROUND_IMAGE_OPTION_KEY),
-        backgroundBrightness: (this.config?.get(BACKGROUND_BRIGHTNESS_OPTION_KEY) as number | undefined) ??
-          this.plugin.settings.backgroundBrightness,
-        backgroundBlur: (this.config?.get(BACKGROUND_BLUR_OPTION_KEY) as number | undefined) ??
-          this.plugin.settings.backgroundBlur,
-        columnTransparency: (this.config?.get(COLUMN_TRANSPARENCY_OPTION_KEY) as number | undefined) ??
-          this.plugin.settings.columnTransparency,
-        columnBlur: (this.config?.get(COLUMN_BLUR_OPTION_KEY) as number | undefined) ??
+        backgroundBrightness:
+          (this.config?.get(BACKGROUND_BRIGHTNESS_OPTION_KEY) as
+            | number
+            | undefined) ?? this.plugin.settings.backgroundBrightness,
+        backgroundBlur:
+          (this.config?.get(BACKGROUND_BLUR_OPTION_KEY) as
+            | number
+            | undefined) ?? this.plugin.settings.backgroundBlur,
+        columnTransparency:
+          (this.config?.get(COLUMN_TRANSPARENCY_OPTION_KEY) as
+            | number
+            | undefined) ?? this.plugin.settings.columnTransparency,
+        columnBlur:
+          (this.config?.get(COLUMN_BLUR_OPTION_KEY) as number | undefined) ??
           this.plugin.settings.columnBlur,
         // Reactive stores
         groupsStore: this.groupsStore,
         groupByPropertyStore: this.groupByPropertyStore,
         selectedPropertiesStore: this.selectedPropertiesStore,
         columnScrollByKeyStore: this.columnScrollByKeyStore,
+        pinnedColumnsStore: this.pinnedColumnsStore,
         // Callbacks
-        onCreateCard: (grpByProperty: BasesPropertyId | null, grpKey: unknown) => this.createCardForColumn(grpByProperty, grpKey),
-        onCardSelect: (filePath: string, extendSelection: boolean) => this.selectCard(filePath, extendSelection),
-        onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => this.startCardDrag(evt, filePath, cardIndex),
+        onCreateCard: (
+          grpByProperty: BasesPropertyId | null,
+          grpKey: unknown,
+        ) => this.createCardForColumn(grpByProperty, grpKey),
+        onCardSelect: (filePath: string, extendSelection: boolean) =>
+          this.selectCard(filePath, extendSelection),
+        onCardDragStart: (
+          evt: DragEvent,
+          filePath: string,
+          cardIndex: number,
+        ) => this.startCardDrag(evt, filePath, cardIndex),
         onCardDragEnd: () => this.endCardDrag(),
         onCardDrop: (
           evt: DragEvent,
@@ -273,15 +314,22 @@ export class KanbanView extends BasesView {
           grpKey: unknown,
           placement: "before" | "after",
         ) => this.handleCardDrop(evt, filePath, grpKey, placement),
-        onCardContextMenu: (evt: MouseEvent, entry: BasesEntry) => this.showCardContextMenu(evt, entry.file),
-        onCardLinkClick: (evt: MouseEvent, target: string) => this.handleCardLinkClick(evt, target),
-        onCardsScroll: (columnKey: string, scrollTop: number) => this.handleColumnScroll(columnKey, scrollTop),
-        onBoardScroll: (scrollLeft: number, scrollTop: number) => this.debouncedSaveBoardScrollPosition(scrollLeft, scrollTop),
+        onCardContextMenu: (evt: MouseEvent, entry: BasesEntry) =>
+          this.showCardContextMenu(evt, entry.file),
+        onCardLinkClick: (evt: MouseEvent, target: string) =>
+          this.handleCardLinkClick(evt, target),
+        onCardsScroll: (columnKey: string, scrollTop: number) =>
+          this.handleColumnScroll(columnKey, scrollTop),
+        onBoardScroll: (scrollLeft: number, scrollTop: number) =>
+          this.debouncedSaveBoardScrollPosition(scrollLeft, scrollTop),
         onBoardKeyDown: (evt: KeyboardEvent) => this.handleKeyDown(evt),
         onBoardClick: () => this.clearSelection(),
-        onStartColumnDrag: (evt: DragEvent, columnKey: string) => this.startColumnDrag(evt, columnKey),
+        onStartColumnDrag: (evt: DragEvent, columnKey: string) =>
+          this.startColumnDrag(evt, columnKey),
         onEndColumnDrag: () => this.endColumnDrag(),
-        onColumnDrop: (targetKey: string, placement: "before" | "after") => this.handleColumnDrop(targetKey, placement),
+        onColumnDrop: (targetKey: string, placement: "before" | "after") =>
+          this.handleColumnDrop(targetKey, placement),
+        onTogglePin: (columnKey: string) => this.toggleColumnPin(columnKey),
       },
     });
   }
@@ -340,13 +388,19 @@ export class KanbanView extends BasesView {
     // Build background config from current settings
     const config = {
       imageInput: this.config?.get(BACKGROUND_IMAGE_OPTION_KEY),
-      brightness: (this.config?.get(BACKGROUND_BRIGHTNESS_OPTION_KEY) as number | undefined) ??
-        this.plugin.settings.backgroundBrightness,
-      blur: (this.config?.get(BACKGROUND_BLUR_OPTION_KEY) as number | undefined) ??
+      brightness:
+        (this.config?.get(BACKGROUND_BRIGHTNESS_OPTION_KEY) as
+          | number
+          | undefined) ?? this.plugin.settings.backgroundBrightness,
+      blur:
+        (this.config?.get(BACKGROUND_BLUR_OPTION_KEY) as number | undefined) ??
         this.plugin.settings.backgroundBlur,
-      columnTransparency: (this.config?.get(COLUMN_TRANSPARENCY_OPTION_KEY) as number | undefined) ??
-        this.plugin.settings.columnTransparency,
-      columnBlur: (this.config?.get(COLUMN_BLUR_OPTION_KEY) as number | undefined) ??
+      columnTransparency:
+        (this.config?.get(COLUMN_TRANSPARENCY_OPTION_KEY) as
+          | number
+          | undefined) ?? this.plugin.settings.columnTransparency,
+      columnBlur:
+        (this.config?.get(COLUMN_BLUR_OPTION_KEY) as number | undefined) ??
         this.plugin.settings.columnBlur,
     };
 
@@ -369,7 +423,11 @@ export class KanbanView extends BasesView {
   private handleCardLinkClick(evt: MouseEvent, target: string): void {
     const isNewTab = evt.ctrlKey || evt.metaKey;
     const isOpenToRight = isNewTab && evt.altKey;
-    void this.app.workspace.openLinkText(target, "", isOpenToRight ? "split" : isNewTab);
+    void this.app.workspace.openLinkText(
+      target,
+      "",
+      isOpenToRight ? "split" : isNewTab,
+    );
   }
 
   private showCardContextMenu(evt: MouseEvent, file: TFile): void {
@@ -421,7 +479,8 @@ export class KanbanView extends BasesView {
           text: this.plugin.settings.trashConfirmButtonText,
           cls: "mod-cta",
         });
-        confirmButton.style.backgroundColor = "var(--background-modifier-error)";
+        confirmButton.style.backgroundColor =
+          "var(--background-modifier-error)";
         confirmButton.style.color = "var(--text-on-accent)";
         confirmButton.addEventListener("click", () => {
           resolve(true);
@@ -678,7 +737,11 @@ export class KanbanView extends BasesView {
   }
 
   // Card drag handlers (replaces drag-controller)
-  private startCardDrag(evt: DragEvent, filePath: string, cardIndex: number): void {
+  private startCardDrag(
+    evt: DragEvent,
+    filePath: string,
+    cardIndex: number,
+  ): void {
     const draggedPaths = getDraggedPathsState(
       this.selectionState,
       filePath,
@@ -818,11 +881,90 @@ export class KanbanView extends BasesView {
 
   private updateColumnOrder(columnOrder: string[]): void {
     this.columnOrderCache = { order: null, raw: "" };
-    this.config?.set(COLUMN_ORDER_OPTION_KEY, serializeColumnOrder(columnOrder));
+    this.config?.set(
+      COLUMN_ORDER_OPTION_KEY,
+      serializeColumnOrder(columnOrder),
+    );
+  }
+
+  private getPinnedColumnsFromConfig(): string[] {
+    const configValue = this.config?.get(PINNED_COLUMNS_OPTION_KEY);
+    const { columns, cache } = parsePinnedColumns(
+      configValue,
+      this.pinnedColumnsCache,
+    );
+    this.pinnedColumnsCache = cache;
+    return columns;
+  }
+
+  private updatePinnedColumns(pinnedColumns: string[]): void {
+    this.pinnedColumnsCache = { columns: null, raw: "" };
+    this.config?.set(
+      PINNED_COLUMNS_OPTION_KEY,
+      serializePinnedColumns(pinnedColumns),
+    );
+    // Update store to trigger re-render
+    this.pinnedColumnsStore.set(new Set(pinnedColumns));
+  }
+
+  private toggleColumnPin(columnKey: string): void {
+    const currentPinned = this.getPinnedColumnsFromConfig();
+    const pinnedSet = new Set(currentPinned);
+
+    if (pinnedSet.has(columnKey)) {
+      pinnedSet.delete(columnKey);
+    } else {
+      pinnedSet.add(columnKey);
+    }
+
+    const newPinned = [...pinnedSet];
+    this.updatePinnedColumns(newPinned);
+    logDebug("PIN", `Toggled pin for ${columnKey}`, {
+      isPinned: pinnedSet.has(columnKey),
+      totalPinned: newPinned.length,
+    });
+  }
+
+  private injectPinnedEmptyColumns(
+    groups: BasesEntryGroup[],
+    pinnedColumns: string[],
+  ): BasesEntryGroup[] {
+    if (pinnedColumns.length === 0) {
+      return groups;
+    }
+
+    const existingKeys = new Set(groups.map((g) => getColumnKey(g.key)));
+    const syntheticGroups: BasesEntryGroup[] = [];
+
+    for (const columnKey of pinnedColumns) {
+      if (!existingKeys.has(columnKey)) {
+        const isNoValueColumn = columnKey === NO_VALUE_COLUMN_KEY;
+        syntheticGroups.push({
+          key: isNoValueColumn
+            ? (undefined as unknown as BasesEntryGroup["key"])
+            : (columnKey as unknown as BasesEntryGroup["key"]),
+          hasKey: (): boolean => !isNoValueColumn,
+          entries: [],
+        });
+      }
+    }
+
+    if (syntheticGroups.length > 0) {
+      logDebug(
+        "PIN",
+        `Injected ${syntheticGroups.length} empty pinned columns`,
+      );
+    }
+
+    return [...groups, ...syntheticGroups];
   }
 
   private getDraggedPaths(sourcePath: string): string[] {
-    return getDraggedPathsState(this.selectionState, sourcePath, this.cardOrder);
+    return getDraggedPathsState(
+      this.selectionState,
+      sourcePath,
+      this.cardOrder,
+    );
   }
 
   private async handleDrop(

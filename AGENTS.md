@@ -11,6 +11,7 @@ Obsidian plugin providing a Kanban view for Bases.
 | Type check only | `bun run typecheck` |
 | Lint | `bun run lint` |
 | Lint specific file | `bun eslint ./src/path/to/file.ts` |
+| Svelte check | `bun run svelte-check` |
 | Install deps | `bun install` |
 
 **Note**: No test framework is configured in this project.
@@ -24,7 +25,9 @@ Obsidian plugin providing a Kanban view for Bases.
 - **External**: `obsidian`, `electron`, and CodeMirror packages are externalized
 - **Debug Flags**: Build-time defines in esbuild.config.mjs control logging
 
-### Type Patterns
+## Code Style
+
+### Types
 
 - Prefer `type` over `interface` for object shapes
 - Use explicit return types on all functions
@@ -32,7 +35,6 @@ Obsidian plugin providing a Kanban view for Bases.
 - Nullable handling: check with `=== null` or `=== undefined`
 - Use `Map` and `Set` for collections when appropriate
 
-Example:
 ```typescript
 export type RenderContext = {
   selectedProperties: BasesPropertyId[];
@@ -47,10 +49,35 @@ function getColumnName(groupKey: unknown): string | null {
 }
 ```
 
+### Imports
+
+Order imports in three groups separated by blank lines:
+1. External libraries (obsidian, svelte)
+2. Internal modules (absolute paths from src/)
+3. Relative imports (./ or ../)
+
+```typescript
+import { App, Plugin } from "obsidian";
+import { mount } from "svelte";
+
+import type BasesKanbanPlugin from "./main";
+
+import { logDebug } from "./kanban-view/debug";
+```
+
+### Naming Conventions
+
+- **Files**: kebab-case.ts for modules, PascalCase.svelte for components
+- **Types/Interfaces**: PascalCase (e.g., `KanbanSettings`)
+- **Functions**: camelCase, verb-first (e.g., `getColumnName`)
+- **Constants**: SCREAMING_SNAKE_CASE for module-level constants
+- **CSS Classes**: kebab-case with `bases-kanban-` prefix
+- **Private Members**: Use `private readonly` for class fields
+
 ### Error Handling
 
 - Use `try/catch` for async operations with vault operations
-- Log errors with context: `console.error("Failed to trash ${file.path}:", error)`
+- Log errors with context: `console.error(`Failed to trash ${file.path}:`, error)`
 - Show user-facing notices for recoverable errors via Obsidian's `Notice` API
 - Validate JSON parsing with type guards
 
@@ -65,18 +92,28 @@ function getColumnName(groupKey: unknown): string | null {
 
 ```
 src/
-├── main.ts                 # Plugin entry point
-├── settings.ts             # Settings interface and UI
-├── kanban-view.ts         # Main view component
-└── kanban-view/
-    ├── constants.ts       # String constants and keys
-    ├── debug.ts          # Debug logging utilities
-    ├── drag-controller.ts # Drag and drop logic
-    ├── indexing.ts        # DOM element indexing utilities
-    ├── mutations.ts       # File/vault mutations
-    ├── options.ts         # View options configuration
-    ├── renderer.ts        # DOM rendering
-    └── utils.ts           # Helper functions
+├── main.ts                      # Plugin entry point
+├── settings.ts                  # Settings interface and UI
+├── kanban-view.ts              # Main view component (Svelte integration)
+├── kanban-view/
+│   ├── constants.ts            # String constants and keys
+│   ├── debug.ts               # Debug logging utilities
+│   ├── drag-state.ts          # Drag state management (Svelte 5)
+│   ├── indexing.ts            # Entry indexing utilities
+│   ├── mutations.ts           # File/vault mutations
+│   ├── options.ts             # View options configuration
+│   ├── state-persistence.ts   # Scroll position persistence
+│   ├── background-manager.ts  # Background image handling
+│   ├── render-pipeline.ts   # Render group building
+│   ├── selection-state.ts     # Selection state management
+│   ├── utils.ts               # Helper functions
+│   └── context.ts             # Svelte context definitions
+└── components/                # Svelte 5 components
+    ├── KanbanRoot.svelte      # Root component with context
+    ├── KanbanBoard.svelte     # Board layout and scroll handling
+    ├── KanbanColumn.svelte    # Column component
+    ├── KanbanCard.svelte      # Card component
+    └── KanbanBackground.svelte # Background image component
 ```
 
 ## Obsidian API Usage
@@ -95,29 +132,54 @@ src/
 - Ignores: `old-version/`, `node_modules/`, `main.js`, `versions.json`
 - Project-aware parsing with type information
 
+## Svelte 5 Patterns
+
+### Reactivity
+
+- Use `$props()` for component props (not exported let)
+- Use `$derived()` for computed values that depend on reactive data
+- Use `$state()` for local mutable state
+- Access stores with `$store` prefix (not `store()`)
+
+```svelte
+<script lang="ts">
+  let { entry, onSelect }: Props = $props();
+  
+  const filePath = $derived(entry.file.path);
+  const selected = $derived($selectedPathsStore.has(filePath));
+</script>
+```
+
+### Drag and Drop
+
+- HTML5 drag events fire `dragleave` with `relatedTarget === null` frequently
+- Only clear drop state when `relatedTarget !== null` and not contained in current element
+- Use `requestAnimationFrame` to throttle dragover calculations
+- Keep card-column drop highlight scoped to the hovered column key/path
+
+### Component Structure
+
+- Define explicit `interface Props` for all component props
+- Use Svelte context for deeply shared data (settings, stores)
+- Pass callbacks as props rather than using events for parent communication
+- Use keyed `{#each}` blocks with unique identifiers: `{#each items as item (item.id)}`
+
 ## Key Implementation Patterns
 
 ### View Lifecycle
+
 - `onDataUpdated()` triggers renders when data changes
-- Implement partial rendering for performance on card moves
+- Use `skipNextDataUpdateRender` flag to prevent redundant renders after drop operations
 - Use session storage for scroll position persistence
-- Partial render currently applies only when column structure is unchanged and <=5 columns changed; otherwise it falls back to full render.
-- Column scroll restoration is session-scoped (`kanban-col-scroll-${viewSessionId}-${columnKey}`), so column scroll positions are restored within a view session, not across app restarts.
+- Column scroll restoration is session-scoped (`kanban-col-scroll-${viewSessionId}-${columnKey}`)
 
 ### Drag and Drop
-- Use `KanbanDragController` for drag state management
-- Implement both card and column drag behaviors
-- Update local order state before mutating files
 
-### Svelte 5 migration notes
-- In `.svelte` files, avoid capturing props into plain `const` values when they can change; use `$derived(...)` so updates propagate.
-- Svelte stores are values, not functions. For example, `Readable<boolean>` should be consumed as `$store`, not `store()`.
-- Keep `bun run svelte-check` in the validation loop. It catches reactive/runtime issues that `tsc` and ESLint can miss.
-- HTML5 drag events often fire `dragleave` with `relatedTarget === null`; avoid clearing drop state on that case or drops can fall back to column-bottom placement unexpectedly.
-- Keep card-column drop highlight scoped to the hovered column key/path; using only a global "has target" check causes all columns to highlight.
-- After Svelte migration, avoid re-introducing imperative DOM renderer/index-reconciliation paths unless strictly needed; they tend to duplicate Svelte reactivity and create dead code.
+- Use `createCardDragState()` for per-column drag state management
+- Update local order state before mutating files (optimistic UI)
+- Use data-driven operations instead of DOM queries for card order
 
-## Debug Logging
+### Debug Logging
 
 Build-time flags control debug output:
 - `DEBUG_ENABLED`: Master switch
@@ -125,6 +187,8 @@ Build-time flags control debug output:
 - `DEBUG_DRAG`: Drag operation logging
 - `DEBUG_SCROLL`: Scroll position logging
 - `DEBUG_CACHE`: Cache hit/miss logging
+
+Runtime toggle: `window.__KANBAN_DEBUG__ = true`
 
 All debug functions are in `kanban-view/debug.ts`.
 

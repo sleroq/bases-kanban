@@ -11,6 +11,7 @@ export interface KanbanContext {
   app: App;
   settings: BasesKanbanSettings;
   selectedPathsStore: Readable<Set<string>>;
+  pinnedColumnsStore: Readable<Set<string>>;
 }
 
 /** Context key - using Symbol for uniqueness */

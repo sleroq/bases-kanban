@@ -12,6 +12,7 @@
     initialBoardScrollLeft: number;
     initialBoardScrollTop: number;
     columnScrollByKey: Record<string, number>;
+    pinnedColumns: Set<string>;
     onCreateCard: (groupByProperty: BasesPropertyId | null, groupKey: unknown) => void;
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
@@ -31,6 +32,7 @@
     onStartColumnDrag: (evt: DragEvent, columnKey: string) => void;
     onEndColumnDrag: () => void;
     onColumnDrop: (targetKey: string, placement: "before" | "after") => void;
+    onTogglePin: (columnKey: string) => void;
   }
 
   let {
@@ -40,6 +42,7 @@
     initialBoardScrollLeft,
     initialBoardScrollTop,
     columnScrollByKey,
+    pinnedColumns,
     onCreateCard,
     onCardSelect,
     onCardDragStart,
@@ -54,6 +57,7 @@
     onStartColumnDrag,
     onEndColumnDrag,
     onColumnDrop,
+    onTogglePin,
   }: Props = $props();
 
   let boardEl: HTMLElement | null = $state(null);
@@ -154,6 +158,7 @@
     {@const groupKey = group.key}
     {@const startIndex = startCardIndexes[idx] ?? 0}
     {@const groupEntries = entries}
+    {@const isPinned = pinnedColumns.has(columnKey)}
     <KanbanColumn
       {columnKey}
       {groupKey}
@@ -164,6 +169,7 @@
       {selectedProperties}
       {columnDragState}
       {cardDragState}
+      {isPinned}
       onStartColumnDrag={handleStartColumnDrag}
       onEndColumnDrag={handleEndColumnDrag}
       onSetColumnDropTarget={handleSetColumnDropTarget}
@@ -177,6 +183,7 @@
       onCardContextMenu={onCardContextMenu}
       onCardLinkClick={onCardLinkClick}
       onCardsScroll={(scrollTop) => onCardsScroll(columnKey, scrollTop)}
+      onTogglePin={() => onTogglePin(columnKey)}
     />
   {/each}
 </div>

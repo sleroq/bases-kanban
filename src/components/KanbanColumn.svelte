@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import type { BasesEntry, BasesPropertyId } from "obsidian";
+  import { setIcon, type BasesEntry, type BasesPropertyId } from "obsidian";
   import { onDestroy, onMount } from "svelte";
   import KanbanCard from "./KanbanCard.svelte";
   import { getColumnName } from "../kanban-view/utils";
@@ -18,6 +18,7 @@
     selectedProperties: BasesPropertyId[];
     columnDragState: ReturnType<typeof createColumnDragState>;
     cardDragState: ReturnType<typeof createCardDragState>;
+    isPinned: boolean;
     onStartColumnDrag: (evt: DragEvent, columnKey: string) => void;
     onEndColumnDrag: () => void;
     onSetColumnDropTarget: (targetKey: string | null, placement: "before" | "after" | null) => void;
@@ -36,6 +37,7 @@
     onCardContextMenu: (evt: MouseEvent, entry: BasesEntry) => void;
     onCardLinkClick: (evt: MouseEvent, target: string) => void;
     onCardsScroll: (scrollTop: number) => void;
+    onTogglePin: () => void;
   }
 
   let {
@@ -48,6 +50,7 @@
     selectedProperties,
     columnDragState,
     cardDragState,
+    isPinned,
     onStartColumnDrag,
     onEndColumnDrag,
     onSetColumnDropTarget,
@@ -61,6 +64,7 @@
     onCardContextMenu,
     onCardLinkClick,
     onCardsScroll,
+    onTogglePin,
   }: Props = $props();
 
   // Get settings from context
@@ -78,6 +82,11 @@
   const columnIsDragging = $derived(columnDragState.isDragging);
   const cardIsDragging = $derived(cardDragState.isDragging);
 
+  // Create reactive stores for this column's drag state
+  const isDropTargetBefore = $derived(columnDragState.isDropTargetStore(columnKey));
+  const dropPlacement = $derived(columnDragState.getDropPlacementStore(columnKey));
+  const isDraggingSourceColumn = $derived(columnDragState.isDraggingSourceStore(columnKey));
+
   onMount(() => {
     if (cardsEl !== null && initialScrollTop > 0) {
       cardsEl.scrollTop = initialScrollTop;
@@ -92,13 +101,31 @@
       cancelAnimationFrame(columnRafId);
     }
   });
+
+  // Action to set the pin icon based on pinned state
+  function setPinIcon(node: HTMLElement): { destroy: () => void } {
+    function updateIcon(): void {
+      node.empty();
+      setIcon(node, isPinned ? "pin-off" : "pin");
+    }
+
+    updateIcon();
+
+    // Return minimal cleanup - Obsidian handles icon lifecycle
+    return {
+      destroy() {
+        // No cleanup needed
+      },
+    };
+  }
 </script>
 
 <div
   bind:this={columnEl}
   class="bases-kanban-column"
-  class:bases-kanban-column-drop-before={columnDragState.isDropTarget(columnKey) && columnDragState.getDropPlacement(columnKey) === "before"}
-  class:bases-kanban-column-drop-after={columnDragState.isDropTarget(columnKey) && columnDragState.getDropPlacement(columnKey) === "after"}
+  class:bases-kanban-column-drop-before={$isDropTargetBefore && $dropPlacement === "before"}
+  class:bases-kanban-column-drop-after={$isDropTargetBefore && $dropPlacement === "after"}
+  class:bases-kanban-column-dragging={$isDraggingSourceColumn}
   data-column-key={columnKey}
   style:--bases-kanban-column-header-width="{settings.columnHeaderWidth}px"
   ondragover={(evt) => {
@@ -146,22 +173,28 @@
 >
   <div
     class="bases-kanban-column-header"
+    draggable="true"
+    role="button"
+    tabindex="0"
+    ondragstart={(evt) => {
+      // Don't initiate drag if clicking the add button
+      const target = evt.target as HTMLElement;
+      if (target.closest(".bases-kanban-add-card-button") !== null) {
+        evt.preventDefault();
+        return;
+      }
+      onStartColumnDrag(evt, columnKey);
+    }}
+    ondragend={() => {
+      // Cancel pending RAF
+      if (columnRafId !== null) {
+        cancelAnimationFrame(columnRafId);
+        columnRafId = null;
+      }
+      onEndColumnDrag();
+    }}
   >
-    <div
-      class="bases-kanban-column-handle"
-      draggable="true"
-      ondragstart={(evt) => onStartColumnDrag(evt, columnKey)}
-      ondragend={() => {
-        // Cancel pending RAF
-        if (columnRafId !== null) {
-          cancelAnimationFrame(columnRafId);
-          columnRafId = null;
-        }
-        onEndColumnDrag();
-      }}
-      role="button"
-      tabindex="0"
-    >
+    <div class="bases-kanban-column-handle">
       <h3 style:width="{settings.columnHeaderWidth}px">{columnName}</h3>
     </div>
     <span class="bases-kanban-column-count">{entries.length}</span>
@@ -178,15 +211,78 @@
     >
       {settings.addCardButtonText}
     </button>
+    <button
+      type="button"
+      class="bases-kanban-pin-button"
+      draggable="false"
+      aria-label={isPinned ? "Unpin column" : "Pin column"}
+      onmousedown={(evt) => evt.stopPropagation()}
+      onclick={(evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        onTogglePin();
+      }}
+      use:setPinIcon
+    >
+    </button>
   </div>
 
   <div
     bind:this={cardsEl}
     class="bases-kanban-cards"
-    class:bases-kanban-drop-target={cardDragState.isDropTargetInColumn(columnKey)}
     ondragover={(evt) => {
       if (groupByProperty === null || !$cardIsDragging) return;
       evt.preventDefault();
+
+      // When dragging over the container (not directly on a card), find the
+      // closest card to the cursor and set it as the drop target. This handles
+      // edge cases where the cursor is near card boundaries or in gaps.
+      if (cardsEl === null) return;
+
+      const target = evt.target as HTMLElement;
+      const isOnCard = target.closest(".bases-kanban-card") !== null;
+      if (isOnCard) {
+        // Card's own dragover handler will handle this
+        return;
+      }
+
+      // Find the card closest to the cursor Y position
+      const cards = cardsEl.querySelectorAll(".bases-kanban-card");
+      if (cards.length === 0) {
+        // Empty column - let the container drop handler handle this
+        onSetCardDropTarget(null, null, null);
+        return;
+      }
+
+      let closestCard: Element | null = null;
+      let closestDistance = Infinity;
+      let placement: "before" | "after" = "after";
+
+      for (const card of Array.from(cards)) {
+        const rect = card.getBoundingClientRect();
+        const cardTop = rect.top;
+        const cardBottom = rect.bottom;
+        const cardMiddle = cardTop + rect.height / 2;
+        const mouseY = evt.clientY;
+
+        // Check if mouse is within the card's vertical range (with some tolerance)
+        const tolerance = 10; // pixels of tolerance for edge detection
+        if (mouseY >= cardTop - tolerance && mouseY <= cardBottom + tolerance) {
+          const distance = Math.abs(mouseY - cardMiddle);
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closestCard = card;
+            placement = mouseY < cardMiddle ? "before" : "after";
+          }
+        }
+      }
+
+      if (closestCard !== null) {
+        const cardPath = closestCard.getAttribute("data-card-path");
+        if (cardPath !== null) {
+          onSetCardDropTarget(cardPath, columnKey, placement);
+        }
+      }
     }}
     ondrop={(evt) => {
       evt.preventDefault();

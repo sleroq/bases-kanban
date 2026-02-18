@@ -20,10 +20,7 @@ export type ResolvedBackgroundStyles = {
  * Resolve a background image input to a usable URL.
  * Supports HTTP(S) URLs and vault file paths.
  */
-function resolveBackgroundInput(
-  app: App,
-  input: string,
-): string | null {
+function resolveBackgroundInput(app: App, input: string): string | null {
   const trimmed = input.trim();
   if (trimmed.length === 0) {
     return null;
@@ -76,7 +73,12 @@ export function resolveBackgroundStyles(
   // Get configuration values
   const brightness = getConfigNumber(config.brightness, 100, 0, 100);
   const blur = getConfigNumber(config.blur, 0, 0, 20);
-  const columnTransparency = getConfigNumber(config.columnTransparency, 0, 0, 100);
+  const columnTransparency = getConfigNumber(
+    config.columnTransparency,
+    0,
+    0,
+    100,
+  );
   const columnBlur = getConfigNumber(config.columnBlur, 0, 0, 20);
 
   return {

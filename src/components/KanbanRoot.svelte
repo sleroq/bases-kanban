@@ -25,6 +25,7 @@
     groupByPropertyStore: Readable<BasesPropertyId | null>;
     selectedPropertiesStore: Readable<BasesPropertyId[]>;
     columnScrollByKeyStore: Readable<Record<string, number>>;
+    pinnedColumnsStore: Readable<Set<string>>;
     onCreateCard: (groupByProperty: BasesPropertyId | null, groupKey: unknown) => void;
     onCardSelect: (filePath: string, extendSelection: boolean) => void;
     onCardDragStart: (evt: DragEvent, filePath: string, cardIndex: number) => void;
@@ -44,6 +45,7 @@
     onStartColumnDrag: (evt: DragEvent, columnKey: string) => void;
     onEndColumnDrag: () => void;
     onColumnDrop: (targetKey: string, placement: "before" | "after") => void;
+    onTogglePin: (columnKey: string) => void;
   }
 
   let {
@@ -62,6 +64,7 @@
     groupByPropertyStore,
     selectedPropertiesStore,
     columnScrollByKeyStore,
+    pinnedColumnsStore,
     onCreateCard,
     onCardSelect,
     onCardDragStart,
@@ -76,14 +79,19 @@
     onStartColumnDrag,
     onEndColumnDrag,
     onColumnDrop,
+    onTogglePin,
   }: Props = $props();
 
   // Provide context to entire component tree
-  const contextValue: KanbanContext = {
-    app,
-    settings,
-    selectedPathsStore,
-  } as KanbanContext;
+  // Use $state with getters so child components always access current values
+  // This resolves "state_referenced_locally" warnings and ensures settings
+  // changes propagate to child components without view remount.
+  const contextValue: KanbanContext = $state({
+    get app() { return app; },
+    get settings() { return settings; },
+    get selectedPathsStore() { return selectedPathsStore; },
+    get pinnedColumnsStore() { return pinnedColumnsStore; },
+  }) as KanbanContext;
   setContext(KANBAN_CONTEXT_KEY, contextValue);
 
   const backgroundConfig = $derived({
@@ -99,6 +107,7 @@
   const groupByProperty = $derived($groupByPropertyStore);
   const selectedProperties = $derived($selectedPropertiesStore);
   const columnScrollByKey = $derived($columnScrollByKeyStore);
+  const pinnedColumns = $derived($pinnedColumnsStore);
 
 </script>
 <KanbanBackground
@@ -114,6 +123,7 @@
   {initialBoardScrollLeft}
   {initialBoardScrollTop}
   {columnScrollByKey}
+  {pinnedColumns}
   {onCreateCard}
   {onCardSelect}
   {onCardDragStart}
@@ -128,4 +138,5 @@
   {onStartColumnDrag}
   {onEndColumnDrag}
   {onColumnDrop}
+  {onTogglePin}
 />

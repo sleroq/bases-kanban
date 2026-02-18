@@ -39,6 +39,11 @@ export function createCardDragState(): {
   getSourcePath: () => string | null;
   getTargetPath: () => string | null;
   getPlacement: () => "before" | "after" | null;
+  // Store-returning methods for reactive access in Svelte 5
+  isDropTargetStore: (path: string) => Readable<boolean>;
+  isDropTargetInColumnStore: (columnKey: string) => Readable<boolean>;
+  getDropPlacementStore: (path: string) => Readable<"before" | "after" | null>;
+  isDraggingSourceStore: (path: string) => Readable<boolean>;
 } {
   const sourcePath = writable<string | null>(null);
   const targetPath = writable<string | null>(null);
@@ -123,6 +128,25 @@ export function createCardDragState(): {
     getPlacement(): "before" | "after" | null {
       return get(placement);
     },
+
+    // Store-returning methods for reactive access in Svelte 5
+    isDropTargetStore(path: string): Readable<boolean> {
+      return derived(targetPath, ($targetPath) => $targetPath === path);
+    },
+
+    isDropTargetInColumnStore(columnKey: string): Readable<boolean> {
+      return derived(targetColumnKey, ($targetColumnKey) => $targetColumnKey === columnKey);
+    },
+
+    getDropPlacementStore(path: string): Readable<"before" | "after" | null> {
+      return derived([targetPath, placement], ([$targetPath, $placement]) =>
+        $targetPath === path ? $placement : null
+      );
+    },
+
+    isDraggingSourceStore(path: string): Readable<boolean> {
+      return derived(sourcePath, ($sourcePath) => $sourcePath === path);
+    },
   };
 }
 
@@ -140,6 +164,9 @@ export function createColumnDragState(): {
   getDropPlacement: (key: string) => "before" | "after" | null;
   isDraggingSource: (key: string) => boolean;
   getPlacement: () => "before" | "after" | null;
+  isDropTargetStore: (key: string) => Readable<boolean>;
+  getDropPlacementStore: (key: string) => Readable<"before" | "after" | null>;
+  isDraggingSourceStore: (key: string) => Readable<boolean>;
 } {
   const sourceKey = writable<string | null>(null);
   const targetKey = writable<string | null>(null);
@@ -205,6 +232,21 @@ export function createColumnDragState(): {
 
     getPlacement(): "before" | "after" | null {
       return get(placement);
+    },
+
+    // Store-returning methods for reactive access in Svelte 5
+    isDropTargetStore(key: string): Readable<boolean> {
+      return derived(targetKey, ($targetKey) => $targetKey === key);
+    },
+
+    getDropPlacementStore(key: string): Readable<"before" | "after" | null> {
+      return derived([targetKey, placement], ([$targetKey, $placement]) =>
+        $targetKey === key ? $placement : null
+      );
+    },
+
+    isDraggingSourceStore(key: string): Readable<boolean> {
+      return derived(sourceKey, ($sourceKey) => $sourceKey === key);
     },
   };
 }

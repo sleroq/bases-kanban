@@ -69,9 +69,7 @@ export function loadScrollState(
         ? state.left
         : 0;
     const top =
-      typeof state.top === "number" && !Number.isNaN(state.top)
-        ? state.top
-        : 0;
+      typeof state.top === "number" && !Number.isNaN(state.top) ? state.top : 0;
     const sessionId =
       typeof state.sessionId === "string" ? state.sessionId : "";
 
@@ -150,6 +148,49 @@ export function parseColumnOrder(
 
 export function serializeColumnOrder(columnOrder: string[]): string {
   return columnOrder.join(",");
+}
+
+// ===== Pinned Columns =====
+
+export type PinnedColumnsCache = {
+  columns: string[] | null;
+  raw: string;
+};
+
+export function parsePinnedColumns(
+  configValue: unknown,
+  cache: PinnedColumnsCache,
+): { columns: string[]; cache: PinnedColumnsCache } {
+  if (typeof configValue !== "string" || configValue.trim().length === 0) {
+    if (cache.columns !== null) {
+      logCacheEvent("Pinned columns cache cleared - empty config");
+    }
+    return { columns: [], cache: { columns: null, raw: "" } };
+  }
+
+  if (configValue === cache.raw && cache.columns !== null) {
+    logCacheEvent("Pinned columns cache HIT");
+    return { columns: cache.columns, cache };
+  }
+
+  logCacheEvent("Pinned columns cache MISS - parsing config");
+
+  const result = configValue
+    .split(",")
+    .map((columnKey) => columnKey.trim())
+    .filter((columnKey) => columnKey.length > 0);
+
+  const newCache: PinnedColumnsCache = {
+    columns: result,
+    raw: configValue,
+  };
+
+  logCacheEvent("Pinned columns cache SAVED", { columnCount: result.length });
+  return { columns: result, cache: newCache };
+}
+
+export function serializePinnedColumns(columns: string[]): string {
+  return columns.join(",");
 }
 
 // ===== Local Card Order =====
@@ -240,9 +281,7 @@ export function serializeLocalCardOrder(
     serialized[columnKey] = paths;
   }
 
-  return Object.keys(serialized).length === 0
-    ? ""
-    : JSON.stringify(serialized);
+  return Object.keys(serialized).length === 0 ? "" : JSON.stringify(serialized);
 }
 
 // ===== Column Scroll Position =====

@@ -36,8 +36,7 @@ export function syncSelectionWithEntries(
 
   return {
     selectedPaths: nextSelected,
-    lastSelectedIndex:
-      nextSelected.size === 0 ? null : state.lastSelectedIndex,
+    lastSelectedIndex: nextSelected.size === 0 ? null : state.lastSelectedIndex,
   };
 }
 
@@ -118,10 +117,7 @@ export function getDraggedPaths(
 /**
  * Check if a path is currently selected.
  */
-export function isPathSelected(
-  state: SelectionState,
-  path: string,
-): boolean {
+export function isPathSelected(state: SelectionState, path: string): boolean {
   return state.selectedPaths.has(path);
 }
 
