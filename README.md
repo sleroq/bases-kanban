@@ -1,4 +1,4 @@
-<img width="1433" height="853" alt="image" src="https://github.com/user-attachments/assets/a195e6d8-059c-42ae-975b-076402482a67" /># Bases Kanban
+# Bases Kanban
 
 <img width="1433" height="853" alt="image" src="https://github.com/user-attachments/assets/96219c18-abfb-4999-a78e-a1ed9cfc64c0" />
 
