@@ -1,0 +1,254 @@
+/**
+ * Drag and drop state management for Svelte Kanban components.
+ * Uses Svelte stores for reactive state (runes only work in .svelte files).
+ */
+
+import { writable, derived, get, type Writable, type Readable } from "svelte/store";
+import { logDragEvent } from "./debug";
+
+// Card drag state types
+export type CardDragState = {
+  sourcePath: string | null;
+  targetPath: string | null;
+  targetColumnKey: string | null;
+  placement: "before" | "after" | null;
+};
+
+// Column drag state types
+export type ColumnDragState = {
+  sourceKey: string | null;
+  targetKey: string | null;
+  placement: "before" | "after" | null;
+};
+
+// Create card drag state stores
+export function createCardDragState(): {
+  sourcePath: Writable<string | null>;
+  targetPath: Writable<string | null>;
+  targetColumnKey: Writable<string | null>;
+  placement: Writable<"before" | "after" | null>;
+  isDragging: Readable<boolean>;
+  startDrag: (filePath: string, dataTransfer: DataTransfer | null) => void;
+  endDrag: () => void;
+  setDropTarget: (targetPath: string | null, targetColumnKey: string | null, placement: "before" | "after" | null) => void;
+  clearDropTarget: () => void;
+  isDropTarget: (path: string) => boolean;
+  isDropTargetInColumn: (columnKey: string) => boolean;
+  getDropPlacement: (path: string) => "before" | "after" | null;
+  isDraggingSource: (path: string) => boolean;
+  getSourcePath: () => string | null;
+  getTargetPath: () => string | null;
+  getPlacement: () => "before" | "after" | null;
+  // Store-returning methods for reactive access in Svelte 5
+  isDropTargetStore: (path: string) => Readable<boolean>;
+  isDropTargetInColumnStore: (columnKey: string) => Readable<boolean>;
+  getDropPlacementStore: (path: string) => Readable<"before" | "after" | null>;
+  isDraggingSourceStore: (path: string) => Readable<boolean>;
+} {
+  const sourcePath = writable<string | null>(null);
+  const targetPath = writable<string | null>(null);
+  const targetColumnKey = writable<string | null>(null);
+  const placement = writable<"before" | "after" | null>(null);
+
+  const isDragging = derived(sourcePath, ($sourcePath) => $sourcePath !== null);
+
+  return {
+    sourcePath,
+    targetPath,
+    targetColumnKey,
+    placement,
+    isDragging,
+
+    startDrag(filePath: string, dataTransfer: DataTransfer | null): void {
+      sourcePath.set(filePath);
+      targetPath.set(null);
+      targetColumnKey.set(null);
+      placement.set(null);
+
+      if (dataTransfer !== null) {
+        dataTransfer.effectAllowed = "move";
+        dataTransfer.setData("text/plain", filePath);
+      }
+
+      logDragEvent("Card drag started", { filePath });
+    },
+
+    endDrag(): void {
+      logDragEvent("Card drag ended", {
+        sourcePath: get(sourcePath),
+        targetPath: get(targetPath),
+        placement: get(placement),
+      });
+
+      sourcePath.set(null);
+      targetPath.set(null);
+      targetColumnKey.set(null);
+      placement.set(null);
+    },
+
+    setDropTarget(newTargetPath: string | null, newTargetColumnKey: string | null, newPlacement: "before" | "after" | null): void {
+      if (get(targetPath) === newTargetPath && get(targetColumnKey) === newTargetColumnKey && get(placement) === newPlacement) {
+        return;
+      }
+      targetPath.set(newTargetPath);
+      targetColumnKey.set(newTargetColumnKey);
+      placement.set(newPlacement);
+    },
+
+    clearDropTarget(): void {
+      targetPath.set(null);
+      targetColumnKey.set(null);
+      placement.set(null);
+    },
+
+    isDropTarget(path: string): boolean {
+      return get(targetPath) === path;
+    },
+
+    isDropTargetInColumn(columnKey: string): boolean {
+      return get(targetColumnKey) === columnKey;
+    },
+
+    getDropPlacement(path: string): "before" | "after" | null {
+      return get(targetPath) === path ? get(placement) : null;
+    },
+
+    isDraggingSource(path: string): boolean {
+      return get(sourcePath) === path;
+    },
+
+    getSourcePath(): string | null {
+      return get(sourcePath);
+    },
+
+    getTargetPath(): string | null {
+      return get(targetPath);
+    },
+
+    getPlacement(): "before" | "after" | null {
+      return get(placement);
+    },
+
+    // Store-returning methods for reactive access in Svelte 5
+    isDropTargetStore(path: string): Readable<boolean> {
+      return derived(targetPath, ($targetPath) => $targetPath === path);
+    },
+
+    isDropTargetInColumnStore(columnKey: string): Readable<boolean> {
+      return derived(targetColumnKey, ($targetColumnKey) => $targetColumnKey === columnKey);
+    },
+
+    getDropPlacementStore(path: string): Readable<"before" | "after" | null> {
+      return derived([targetPath, placement], ([$targetPath, $placement]) =>
+        $targetPath === path ? $placement : null
+      );
+    },
+
+    isDraggingSourceStore(path: string): Readable<boolean> {
+      return derived(sourcePath, ($sourcePath) => $sourcePath === path);
+    },
+  };
+}
+
+// Create column drag state stores
+export function createColumnDragState(): {
+  sourceKey: Writable<string | null>;
+  targetKey: Writable<string | null>;
+  placement: Writable<"before" | "after" | null>;
+  isDragging: Readable<boolean>;
+  startDrag: (columnKey: string, dataTransfer: DataTransfer | null) => void;
+  endDrag: () => void;
+  setDropTarget: (targetKey: string | null, newPlacement: "before" | "after" | null) => void;
+  clearDropTarget: () => void;
+  isDropTarget: (key: string) => boolean;
+  getDropPlacement: (key: string) => "before" | "after" | null;
+  isDraggingSource: (key: string) => boolean;
+  getPlacement: () => "before" | "after" | null;
+  isDropTargetStore: (key: string) => Readable<boolean>;
+  getDropPlacementStore: (key: string) => Readable<"before" | "after" | null>;
+  isDraggingSourceStore: (key: string) => Readable<boolean>;
+} {
+  const sourceKey = writable<string | null>(null);
+  const targetKey = writable<string | null>(null);
+  const placement = writable<"before" | "after" | null>(null);
+
+  const isDragging = derived(sourceKey, ($sourceKey) => $sourceKey !== null);
+
+  return {
+    sourceKey,
+    targetKey,
+    placement,
+    isDragging,
+
+    startDrag(columnKey: string, dataTransfer: DataTransfer | null): void {
+      sourceKey.set(columnKey);
+      targetKey.set(null);
+      placement.set(null);
+
+      if (dataTransfer !== null) {
+        dataTransfer.effectAllowed = "move";
+        dataTransfer.setData("text/plain", columnKey);
+      }
+
+      logDragEvent("Column drag started", { columnKey });
+    },
+
+    endDrag(): void {
+      logDragEvent("Column drag ended", {
+        sourceKey: get(sourceKey),
+        targetKey: get(targetKey),
+        placement: get(placement),
+      });
+
+      sourceKey.set(null);
+      targetKey.set(null);
+      placement.set(null);
+    },
+
+    setDropTarget(newTargetKey: string | null, newPlacement: "before" | "after" | null): void {
+      if (get(targetKey) === newTargetKey && get(placement) === newPlacement) {
+        return;
+      }
+      targetKey.set(newTargetKey);
+      placement.set(newPlacement);
+    },
+
+    clearDropTarget(): void {
+      targetKey.set(null);
+      placement.set(null);
+    },
+
+    isDropTarget(key: string): boolean {
+      return get(targetKey) === key;
+    },
+
+    getDropPlacement(key: string): "before" | "after" | null {
+      return get(targetKey) === key ? get(placement) : null;
+    },
+
+    isDraggingSource(key: string): boolean {
+      return get(sourceKey) === key;
+    },
+
+    getPlacement(): "before" | "after" | null {
+      return get(placement);
+    },
+
+    // Store-returning methods for reactive access in Svelte 5
+    isDropTargetStore(key: string): Readable<boolean> {
+      return derived(targetKey, ($targetKey) => $targetKey === key);
+    },
+
+    getDropPlacementStore(key: string): Readable<"before" | "after" | null> {
+      return derived([targetKey, placement], ([$targetKey, $placement]) =>
+        $targetKey === key ? $placement : null
+      );
+    },
+
+    isDraggingSourceStore(key: string): Readable<boolean> {
+      return derived(sourceKey, ($sourceKey) => $sourceKey === key);
+    },
+  };
+}
+
+
